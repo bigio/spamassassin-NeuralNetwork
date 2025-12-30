@@ -1,0 +1,12 @@
+ifplugin Mail::SpamAssassin::Plugin::NeuralNetwork
+
+  neuralnetwork_data_dir /etc/mail/spamassassin/NN
+
+  body		NN_SPAM		eval:check_neuralnetwork_spam()
+  describe	NN_SPAM		Email considered as spam by Neural Network
+  score		NN_SPAM		1.0
+
+  body		NN_HAM		eval:check_neuralnetwork_ham()
+  describe	NN_HAM		Email considered as ham by Neural Network
+  score		NN_HAM		-1.0
+endif
