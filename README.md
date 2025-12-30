@@ -1,7 +1,5 @@
 # Apache SpamAssassin Neural Network Plugin
 
-![Apache SpamAssassin](https://www.apache.org/images/asf_logo.png)
-
 ## Overview
 
 This repository contains a plugin for **Apache SpamAssassin** that utilizes **Neural Network** techniques to enhance spam detection. By integrating advanced machine learning methods, the plugin aims to improve the accuracy and efficiency of filtering spam emails, reducing false positives and negatives.
