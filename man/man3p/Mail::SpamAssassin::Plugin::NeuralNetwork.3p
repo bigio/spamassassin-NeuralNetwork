@@ -58,7 +58,7 @@
 .\" ========================================================================
 .\"
 .IX Title "NeuralNetwork 3"
-.TH NeuralNetwork 3 2025-12-30 "perl v5.42.0" "User Contributed Perl Documentation"
+.TH NeuralNetwork 3 2026-01-29 "perl v5.42.0" "User Contributed Perl Documentation"
 .\" For nroff, turn off justification.  Always turn off hyphenation; it makes
 .\" way too many mistakes in technical documents.
 .if n .ad l
@@ -106,3 +106,32 @@ Number of training epochs to perform when learning a single message.
 .IP "neuralnetwork_stopwords words (default: ""the and for with that this from there their have be not but you your"")" 4
 .IX Item "neuralnetwork_stopwords words (default: ""the and for with that this from there their have be not but you your"")"
 Space\-separated list of stopwords to ignore when tokenizing text.
+.IP "neuralnetwork_dsn		(default: none)" 4
+.IX Item "neuralnetwork_dsn (default: none)"
+The DBI dsn of the database to use.
+.Sp
+For SQLite, the database will be created automatically if it does not
+already exist, the supplied path and file must be read/writable by the
+user running spamassassin or spamd.
+.Sp
+For MySQL/MariaDB or PostgreSQL, see sql\-directory for database table
+creation clauses.
+.Sp
+You will need to have the proper DBI module for your database.  For example
+DBD::SQLite, DBD::mysql, DBD::MariaDB or DBD::Pg.
+.Sp
+Minimum required SQLite version is 3.24.0 (available from DBD::SQLite 1.59_01).
+.Sp
+Examples:
+.Sp
+.Vb 1
+\& neuralnetwork_dsn dbi:SQLite:dbname=/var/lib/spamassassin/NeuralNetwork.db
+.Ve
+.IP "neuralnetwork_username  (default: none)" 4
+.IX Item "neuralnetwork_username (default: none)"
+The username that should be used to connect to the database.  Not used for
+SQLite.
+.IP "neuralnetwork_password (default: none)" 4
+.IX Item "neuralnetwork_password (default: none)"
+The password that should be used to connect to the database.  Not used for
+SQLite.

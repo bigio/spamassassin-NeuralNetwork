@@ -116,6 +116,36 @@ Number of training epochs to perform when learning a single message.
 
 Space-separated list of stopwords to ignore when tokenizing text.
 
+=item neuralnetwork_dsn		(default: none)
+
+The DBI dsn of the database to use.
+
+For SQLite, the database will be created automatically if it does not
+already exist, the supplied path and file must be read/writable by the
+user running spamassassin or spamd.
+
+For MySQL/MariaDB or PostgreSQL, see sql-directory for database table
+creation clauses.
+
+You will need to have the proper DBI module for your database.  For example
+DBD::SQLite, DBD::mysql, DBD::MariaDB or DBD::Pg.
+
+Minimum required SQLite version is 3.24.0 (available from DBD::SQLite 1.59_01).
+
+Examples:
+
+ neuralnetwork_dsn dbi:SQLite:dbname=/var/lib/spamassassin/NeuralNetwork.db
+
+=item neuralnetwork_username  (default: none)
+
+The username that should be used to connect to the database.  Not used for
+SQLite.
+
+=item neuralnetwork_password (default: none)
+
+The password that should be used to connect to the database.  Not used for
+SQLite.
+
 =back
 
 =cut
@@ -186,6 +216,24 @@ Space-separated list of stopwords to ignore when tokenizing text.
     default => 'the and for with that this from there their have be not but you your',
     type => $Mail::SpamAssassin::Conf::CONF_TYPE_STRING,
   });
+  push(@cmds, {
+    setting => 'neuralnetwork_dsn',
+    is_admin => 1,
+    default => undef,
+    type => $Mail::SpamAssassin::Conf::CONF_TYPE_STRING,
+  });
+  push(@cmds, {
+    setting => 'neuralnetwork_username',
+    is_admin => 1,
+    default => '',
+    type => $Mail::SpamAssassin::Conf::CONF_TYPE_STRING,
+  });
+  push(@cmds, {
+    setting => 'neuralnetwork_password',
+    is_admin => 1,
+    default => '',
+    type => $Mail::SpamAssassin::Conf::CONF_TYPE_STRING,
+  });
 
   $conf->{parser}->register_commands(\@cmds);
 }
@@ -193,7 +241,14 @@ Space-separated list of stopwords to ignore when tokenizing text.
 sub finish_parsing_end {
   my ($self, $opts) = @_;
 
-  my $nn_data_dir = $self->{main}->{conf}->{neuralnetwork_data_dir};
+  my $conf = $self->{main}->{conf};
+  my $nn_data_dir = $conf->{neuralnetwork_data_dir};
+
+  # Initialize SQL connection if configured
+  if (defined $conf->{neuralnetwork_dsn}) {
+    $self->_init_sql_connection($conf);
+  }
+
   return unless defined $nn_data_dir;
 
   $nn_data_dir = Mail::SpamAssassin::Util::untaint_file_path($nn_data_dir);
@@ -231,7 +286,7 @@ sub _get_first_visible_text {
 # Converts a list of raw text strings into a list of
 # numerical feature vectors (dense arrays), suitable for Neural Networks training.
 sub _text_to_features {
-    my ($conf, $nn_data_dir, $train, $label, @emails) = @_;
+    my ($self, $conf, $nn_data_dir, $train, $label, @emails) = @_;
 
     my $MIN_WORD_LEN = $conf->{neuralnetwork_min_word_len};
     my $MAX_WORD_LEN = $conf->{neuralnetwork_max_word_len};
@@ -249,17 +304,30 @@ sub _text_to_features {
 
     # Read the vocabulary (format: { terms => {word => {total=>n,docs=>m,spam=>s,ham=>h}}, _doc_count => N, _spam_count => S, _ham_count => H })
     my %vocabulary;
-    my $vocab_path = File::Spec->catfile($nn_data_dir, 'vocabulary.data');
-    if(-f $vocab_path) {
-      eval {
-        my $ref = retrieve($vocab_path);
-        if (ref $ref eq 'HASH') {
-          %vocabulary = %{$ref};
-        }
-        1;
-      } or do {
-        warn("Failed to retrieve vocabulary from $vocab_path: " . ($@ || 'unknown'));
-      };
+
+    # Try loading from SQL first if configured
+    if (defined $conf->{neuralnetwork_dsn} && $self && $self->{dbh}) {
+      my $vocab_ref = $self->_load_vocabulary_from_sql($self->{main}->{username});
+      if (ref($vocab_ref) eq 'HASH' && scalar keys %{$vocab_ref->{terms} || {}}) {
+        %vocabulary = %{$vocab_ref};
+        dbg("Loaded vocabulary from SQL database");
+      }
+    }
+
+    # If not loaded from SQL, try loading from file
+    if (!keys %{$vocabulary{terms} || {}}) {
+      my $vocab_path = File::Spec->catfile($nn_data_dir, 'vocabulary.data');
+      if(-f $vocab_path) {
+        eval {
+          my $ref = retrieve($vocab_path);
+          if (ref $ref eq 'HASH') {
+            %vocabulary = %{$ref};
+          }
+          1;
+        } or do {
+          warn("Failed to retrieve vocabulary from $vocab_path: " . ($@ || 'unknown'));
+        };
+      }
     }
 
     $vocabulary{terms} ||= {};
@@ -329,14 +397,19 @@ sub _text_to_features {
         $vocabulary{terms} = \%pruned;
       }
 
-      # Persist vocabulary
-      $vocab_path = Mail::SpamAssassin::Util::untaint_file_path($vocab_path);
-      eval {
-        store(\%vocabulary, $vocab_path) or die "store failed";
-        1;
-      } or do {
-        warn("Failed to store vocabulary to $vocab_path: " . ($@ || 'unknown'));
-      };
+      my $vocab_path;
+      if (defined $conf->{neuralnetwork_dsn} && $self && $self->{dbh}) {
+        $self->_save_vocabulary_to_sql(\%vocabulary, $self->{main}->{username});
+      } else {
+        $vocab_path = File::Spec->catfile($nn_data_dir, 'vocabulary.data');
+        $vocab_path = Mail::SpamAssassin::Util::untaint_file_path($vocab_path);
+        eval {
+          store(\%vocabulary, $vocab_path) or die "store failed";
+          1;
+        } or do {
+          warn("Failed to store vocabulary to $vocab_path: " . ($@ || 'unknown'));
+        };
+      }
     }
 
     # Build vocabulary index (stable sorted order)
@@ -427,7 +500,7 @@ sub learn_message {
   my $update_vocab = 1;
 
   # Convert email text to numerical feature vectors
-  my ($feature_vectors, $vocab_size) = _text_to_features($self->{main}->{conf}, $nn_data_dir, $update_vocab, $isspam, @email_texts);
+  my ($feature_vectors, $vocab_size) = _text_to_features($self, $self->{main}->{conf}, $nn_data_dir, $update_vocab, $isspam, @email_texts);
 
   return unless $feature_vectors && @$feature_vectors;
 
@@ -473,6 +546,15 @@ sub learn_message {
   } and do {
     dbg("Model saved to '$dataset_path' (input:$num_input)");
     $self->{neural_model} = $network;
+
+    # Record message as learned to prevent re-learning
+    if (defined $msg) {
+      my $msgid = $msg->get_msgid();
+      $msgid //= $msg->generate_msgid();
+      if (defined $msgid && length($msgid) > 0) {
+        $self->_save_msgid_to_neural_seen($msgid, $isspam);
+      }
+    }
   } or do {
     info("Cannot save model to '$dataset_path' (" . ($@ || 'unknown') . ")");
   };
@@ -543,7 +625,7 @@ sub _check_neuralnetwork {
   my $update_vocab = 0;
 
   # Convert email to feature vector using the same vocabulary
-  my ($feature_vectors, $vocab_size) = _text_to_features($conf, $nn_data_dir, $update_vocab, undef, $email_to_predict);
+  my ($feature_vectors, $vocab_size) = _text_to_features($self, $conf, $nn_data_dir, $update_vocab, undef, $email_to_predict);
   unless ($feature_vectors && @$feature_vectors) {
     $pms->{neuralnetwork_prediction} = undef;
     dbg("Not enough tokens found");
@@ -606,6 +688,235 @@ sub _check_neuralnetwork {
   }
   $pms->{neuralnetwork_prediction} = $prediction;
   return;
+}
+
+sub _init_sql_connection {
+  my ($self, $conf) = @_;
+  return if $self->{dbh};
+  return if !$conf->{neuralnetwork_dsn};
+
+  my $dsn = $conf->{neuralnetwork_dsn};
+  my $username = $conf->{neuralnetwork_username} || '';
+  my $password = $conf->{neuralnetwork_password} || '';
+
+  eval {
+    local $SIG{'__DIE__'};
+    require DBI;
+    $self->{dbh} = DBI->connect_cached(
+      $dsn,
+      $username,
+      $password,
+      {RaiseError => 1, PrintError => 0, InactiveDestroy => 1, AutoCommit => 1}
+    );
+    $self->_create_vocabulary_table();
+    dbg("SQL connection initialized for vocabulary storage");
+    1;
+  } or do {
+    my $err = $@ || 'unknown';
+    warn "NeuralNetwork: SQL connection failed: $err\n";
+    undef $self->{dbh};
+  };
+}
+
+sub _create_vocabulary_table {
+  my ($self) = @_;
+  return if !$self->{dbh};
+
+  eval {
+    if ($self->{dbh}->{Driver}->{Name} eq 'SQLite') {
+      $self->{dbh}->do("
+        CREATE TABLE IF NOT EXISTS neural_vocabulary (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          username VARCHAR(200) NOT NULL DEFAULT '',
+          keyword VARCHAR(256) NOT NULL DEFAULT '',
+          total_count INTEGER NOT NULL DEFAULT 0,
+          docs_count INTEGER NOT NULL DEFAULT 0,
+          spam_count INTEGER NOT NULL DEFAULT 0,
+          ham_count INTEGER NOT NULL DEFAULT 0,
+          UNIQUE (username, keyword)
+        )
+      ");
+      $self->{dbh}->do("
+        CREATE TABLE IF NOT EXISTS neural_seen (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          username VARCHAR(200) NOT NULL DEFAULT 'default',
+          msgid VARCHAR(200) NOT NULL DEFAULT '',
+          flag CHAR(1) NOT NULL DEFAULT '',
+          UNIQUE (username, msgid)
+        )
+      ");
+      dbg("Vocabulary tables created or already exist");
+    }
+    1;
+  } or do {
+    my $err = $@ || 'unknown';
+    dbg("Failed to create vocabulary tables: $err");
+  };
+}
+
+sub _save_msgid_to_neural_seen {
+  my ($self, $msgid, $isspam) = @_;
+  return unless defined $msgid && length($msgid) > 0;
+
+  # Save to file-based neural_seen if no SQL configured
+  if (!defined $self->{main}->{conf}->{neuralnetwork_dsn} || !$self->{dbh}) {
+    return; # File-based storage could be added here if needed
+  }
+
+  eval {
+    # Flag: 'S' for spam, 'H' for ham
+    my $flag = $isspam ? 'S' : 'H';
+    my $username = $self->{main}->{username} || 'default';
+ 
+    # Use INSERT IGNORE to avoid duplicate key errors
+    my $driver = $self->{dbh}->{Driver}->{Name};
+    my $insert_sql;
+
+    if (lc($driver) eq 'mysql') {
+      # MySQL: INSERT IGNORE
+      $insert_sql = "
+        INSERT IGNORE INTO neural_seen (username, msgid, flag)
+        VALUES (?, ?, ?)
+      ";
+    } else {
+      # PostgreSQL/SQLite: Try insert, ignore if duplicate
+      $insert_sql = "
+        INSERT OR IGNORE INTO neural_seen (username, msgid, flag)
+        VALUES (?, ?, ?)
+      ";
+    }
+
+    my $sth = $self->{dbh}->prepare($insert_sql);
+    $sth->execute($username, $msgid, $flag);
+
+    dbg("Recorded learned message: $msgid");
+    1;
+  } or do {
+    my $err = $@ || 'unknown';
+    dbg("Failed to save message ID to neural_seen: $err");
+  };
+}
+
+sub _save_vocabulary_to_sql {
+  my ($self, $vocabulary, $username) = @_;
+  return unless $self->{dbh} && defined $vocabulary && ref($vocabulary) eq 'HASH';
+
+  $username ||= $self->{main}->{username};
+
+  eval {
+    my $terms = $vocabulary->{terms} || {};
+    return unless scalar keys %{$terms};
+
+    # Use ON DUPLICATE KEY UPDATE for MySQL or ON CONFLICT for other databases
+    my $driver = $self->{dbh}->{Driver}->{Name};
+    my $upsert_sql;
+
+    if (lc($driver) eq 'mysql') {
+      $upsert_sql = "
+        INSERT INTO neural_vocabulary (username, keyword, total_count, docs_count, spam_count, ham_count)
+        VALUES (?, ?, ?, ?, ?, ?)
+        ON DUPLICATE KEY UPDATE
+          total_count = VALUES(total_count),
+          docs_count = VALUES(docs_count),
+          spam_count = VALUES(spam_count),
+          ham_count = VALUES(ham_count)
+      ";
+    } else {
+      $upsert_sql = "
+        INSERT INTO neural_vocabulary (username, keyword, total_count, docs_count, spam_count, ham_count)
+        VALUES (?, ?, ?, ?, ?, ?)
+        ON CONFLICT (username, keyword) DO UPDATE SET
+          total_count = excluded.total_count,
+          docs_count = excluded.docs_count,
+          spam_count = excluded.spam_count,
+          ham_count = excluded.ham_count
+      ";
+    }
+
+    my $sth_upsert = $self->{dbh}->prepare($upsert_sql);
+    my $count = 0;
+
+    foreach my $keyword (keys %{$terms}) {
+      my $term_data = $terms->{$keyword};
+      $sth_upsert->execute(
+        $username,
+        $keyword,
+        $term_data->{total} || 0,
+        $term_data->{docs} || 0,
+        $term_data->{spam} || 0,
+        $term_data->{ham} || 0
+      );
+      $count++;
+    }
+
+    dbg("Saved $count vocabulary terms to SQL for user: $username");
+
+    # Invalidate cache for this user
+    if (defined $self->{_vocab_cache}) {
+      delete $self->{_vocab_cache}{$username};
+    }
+    1;
+  } or do {
+    my $err = $@ || 'unknown';
+    dbg("Failed to save vocabulary to SQL: $err");
+  };
+}
+
+sub _load_vocabulary_from_sql {
+  my ($self, $username) = @_;
+  return {} unless $self->{dbh};
+
+  $username ||= $self->{main}->{username};
+
+  # Check cache first to avoid repeated database queries
+  if (!defined $self->{_vocab_cache}) {
+    $self->{_vocab_cache} = {};
+  }
+
+  if (exists $self->{_vocab_cache}{$username}) {
+    dbg("Using cached vocabulary for user: $username");
+    return $self->{_vocab_cache}{$username};
+  }
+
+  my %vocabulary = (
+    terms => {},
+    _doc_count => 0,
+    _spam_count => 0,
+    _ham_count => 0
+  );
+
+  eval {
+    my $sth = $self->{dbh}->prepare("
+      SELECT keyword, total_count, docs_count, spam_count, ham_count
+      FROM neural_vocabulary
+      WHERE username = ?
+    ");
+    $sth->execute($username);
+
+    my $rows = $sth->fetchall_arrayref();
+    my $count = 0;
+
+    foreach my $row (@{$rows}) {
+      my ($keyword, $total, $docs, $spam, $ham) = @{$row};
+      $vocabulary{terms}{$keyword} = {
+        total => $total,
+        docs => $docs,
+        spam => $spam,
+        ham => $ham
+      };
+      $count++;
+    }
+
+    dbg("Loaded $count vocabulary terms from SQL for user: $username");
+    1;
+  } or do {
+    my $err = $@ || 'unknown';
+    dbg("Failed to load vocabulary from SQL: $err");
+  };
+
+  # Cache the vocabulary
+  $self->{_vocab_cache}{$username} = \%vocabulary;
+  return \%vocabulary;
 }
 
 1;
