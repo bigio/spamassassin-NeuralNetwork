@@ -226,6 +226,8 @@ SQLite.
     setting => 'neuralnetwork_autolearn',
     default => 0,
     type => $Mail::SpamAssassin::Conf::CONF_TYPE_BOOL,
+  });
+  push(@cmds, {
     setting => 'neuralnetwork_dsn',
     is_admin => 1,
     default => undef,
@@ -326,7 +328,6 @@ sub _text_to_features {
       my $vocab_ref = $self->_load_vocabulary_from_sql($self->{main}->{username});
       if (ref($vocab_ref) eq 'HASH' && scalar keys %{$vocab_ref->{terms} || {}}) {
         %vocabulary = %{$vocab_ref};
-        dbg("Loaded vocabulary from SQL database");
       }
     }
 
@@ -951,7 +952,7 @@ sub _load_vocabulary_from_sql {
         $pruned{$top[$i]} = $vocabulary{terms}{$top[$i]};
       }
       $vocabulary{terms} = \%pruned;
-      dbg("Pruned vocabulary from $terms_count to $VOCAB_CAP terms for user: $username");
+      dbg("Pruned in-memory vocabulary from $terms_count to $VOCAB_CAP terms for user: $username");
     }
     1;
   } or do {
