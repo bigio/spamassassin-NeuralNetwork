@@ -116,6 +116,13 @@ Number of training epochs to perform when learning a single message.
 
 Space-separated list of stopwords to ignore when tokenizing text.
 
+=item B<neuralnetwork_autolearn> 0|1 (default 0)
+
+When SpamAssassin declares a message a clear spam or ham during the message
+scan, and launches the auto-learn process, message is autolearned as spam/ham
+in the same way as during the manual learning.
+Value 0 at this option disables the auto-learn process for this plugin.
+
 =back
 
 =cut
@@ -186,8 +193,20 @@ Space-separated list of stopwords to ignore when tokenizing text.
     default => 'the and for with that this from there their have be not but you your',
     type => $Mail::SpamAssassin::Conf::CONF_TYPE_STRING,
   });
+  push(@cmds, {
+    setting => 'neuralnetwork_autolearn',
+    default => 0,
+    type => $Mail::SpamAssassin::Conf::CONF_TYPE_BOOL,
+  });
 
   $conf->{parser}->register_commands(\@cmds);
+}
+
+sub autolearn {
+  my ($self, $params) = @_;
+
+  $self->{last_pms} = $params->{permsgstatus};
+  return $self->{autolearn} = 1;
 }
 
 sub finish_parsing_end {
@@ -384,6 +403,26 @@ sub learn_message {
   my ($self, $params) = @_;
   my $isspam = $params->{isspam};
   my $msg = $params->{msg};
+  my $conf = $self->{main}->{conf};
+  my $MIN_TEXT_LEN = $conf->{neuralnetwork_min_text_len};
+  my $LEARNING_RATE = $conf->{neuralnetwork_learning_rate};
+  my $MOMENTUM = $conf->{neuralnetwork_momentum};
+  my $TRAIN_EPOCHS = $conf->{neuralnetwork_train_epochs};
+  my @training_data;
+  my $autolearn = defined $self->{autolearn};
+
+  if ($autolearn && !$conf->{neuralnetwork_autolearn}) {
+    dbg("autolearning disabled, quitting");
+    return 0;
+  }
+
+  dbg("learning a message");
+  my $pms = ($self->{last_pms})? $self->{last_pms} : Mail::SpamAssassin::PerMsgStatus->new($self->{main}, $params->{msg});
+  if (!defined $pms->{relays_internal} && !defined $pms->{relays_external}) {
+    $pms->extract_message_metadata();
+  }
+  $self->{last_pms} = $self->{autolearn} = undef;
+  $self->{pms} = $pms;
 
   my $nn_data_dir = $self->{main}->{conf}->{neuralnetwork_data_dir};
   unless (defined $nn_data_dir) {
@@ -401,13 +440,6 @@ sub learn_message {
     return;
   }
 
-  my $conf = $self->{main}->{conf};
-  my $MIN_TEXT_LEN = $conf->{neuralnetwork_min_text_len};
-  my $LEARNING_RATE = $conf->{neuralnetwork_learning_rate};
-  my $MOMENTUM = $conf->{neuralnetwork_momentum};
-  my $TRAIN_EPOCHS = $conf->{neuralnetwork_train_epochs};
-
-  my @training_data;
   if(defined $msg) {
     my $text = _get_first_visible_text($msg);
     if (!defined $text || length($text) < $MIN_TEXT_LEN) {
