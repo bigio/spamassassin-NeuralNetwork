@@ -116,14 +116,12 @@ Number of training epochs to perform when learning a single message.
 
 Space-separated list of stopwords to ignore when tokenizing text.
 
-<<<<<<< HEAD
 =item B<neuralnetwork_autolearn> 0|1 (default 0)
 
 When SpamAssassin declares a message a clear spam or ham during the message
 scan, and launches the auto-learn process, message is autolearned as spam/ham
 in the same way as during the manual learning.
 Value 0 at this option disables the auto-learn process for this plugin.
-=======
 =item neuralnetwork_dsn		(default: none)
 
 The DBI dsn of the database to use.
@@ -153,7 +151,6 @@ SQLite.
 
 The password that should be used to connect to the database.  Not used for
 SQLite.
->>>>>>> sql
 
 =back
 
@@ -226,11 +223,9 @@ SQLite.
     type => $Mail::SpamAssassin::Conf::CONF_TYPE_STRING,
   });
   push(@cmds, {
-<<<<<<< HEAD
     setting => 'neuralnetwork_autolearn',
     default => 0,
     type => $Mail::SpamAssassin::Conf::CONF_TYPE_BOOL,
-=======
     setting => 'neuralnetwork_dsn',
     is_admin => 1,
     default => undef,
@@ -247,7 +242,6 @@ SQLite.
     is_admin => 1,
     default => '',
     type => $Mail::SpamAssassin::Conf::CONF_TYPE_STRING,
->>>>>>> sql
   });
 
   $conf->{parser}->register_commands(\@cmds);
