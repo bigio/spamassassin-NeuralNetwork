@@ -885,6 +885,9 @@ sub _load_vocabulary_from_sql {
     _ham_count => 0
   );
 
+  my $conf = $self->{main}->{conf};
+  my $VOCAB_CAP = $conf->{neuralnetwork_vocab_cap};
+
   eval {
     my $sth = $self->{dbh}->prepare("
       SELECT keyword, total_count, docs_count, spam_count, ham_count
@@ -908,6 +911,19 @@ sub _load_vocabulary_from_sql {
     }
 
     dbg("Loaded $count vocabulary terms from SQL for user: $username");
+
+    # Prune vocabulary if needed: keep top VOCAB_CAP by total count
+    my $terms_count = scalar keys %{ $vocabulary{terms} };
+    if ($terms_count > $VOCAB_CAP) {
+      my @top = sort { ($vocabulary{terms}{$b}{total}||0) <=> ($vocabulary{terms}{$a}{total}||0) } keys %{ $vocabulary{terms} };
+      my %pruned;
+      for my $i (0 .. $VOCAB_CAP-1) {
+        last unless defined $top[$i];
+        $pruned{$top[$i]} = $vocabulary{terms}{$top[$i]};
+      }
+      $vocabulary{terms} = \%pruned;
+      dbg("Pruned vocabulary from $terms_count to $VOCAB_CAP terms for user: $username");
+    }
     1;
   } or do {
     my $err = $@ || 'unknown';
