@@ -1,6 +1,7 @@
 ifplugin Mail::SpamAssassin::Plugin::NeuralNetwork
 
   neuralnetwork_data_dir /etc/mail/spamassassin/NN
+  neuralnetwork_dsn dbi:SQLite:dbname=/etc/mail/spamassassin/NN/NeuralNetwork.db
 
   body		NN_SPAM		eval:check_neuralnetwork_spam()
   describe	NN_SPAM		Email considered as spam by Neural Network
