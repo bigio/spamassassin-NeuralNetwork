@@ -14,7 +14,7 @@ This repository contains a plugin for **Apache SpamAssassin** that utilizes **Ne
 
 ### Required Perl Module
 
-This plugin requires the **AI::Fann** Perl module, which provides a simple interface to the Fast Artificial Neural Network Library (FANN).
+This plugin requires the **AI::FANN** Perl module, which provides a simple interface to the Fast Artificial Neural Network Library (FANN).
 
 To install AI::Fann, you can use the CPAN shell:
 
