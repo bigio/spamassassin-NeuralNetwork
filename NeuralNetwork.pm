@@ -275,7 +275,7 @@ sub finish_parsing_end {
     return;
   }
 
-  my $dataset_path = File::Spec->catfile($nn_data_dir, 'fann.model');
+  my $dataset_path = File::Spec->catfile($nn_data_dir, 'fann-' . $self->{main}->{username} . '.model');
   if (-f $dataset_path) {
     eval {
       $self->{neural_model} = AI::FANN->new_from_file($dataset_path);
@@ -333,7 +333,7 @@ sub _text_to_features {
 
     # If not loaded from SQL, try loading from file
     if (!keys %{$vocabulary{terms} || {}}) {
-      my $vocab_path = File::Spec->catfile($nn_data_dir, 'vocabulary.data');
+      my $vocab_path = File::Spec->catfile($nn_data_dir, 'vocabulary-' . $self->{main}->{username} . '.data');
       if(-f $vocab_path) {
         eval {
           my $ref = retrieve($vocab_path);
@@ -418,7 +418,7 @@ sub _text_to_features {
       if (defined $conf->{neuralnetwork_dsn} && $self && $self->{dbh}) {
         $self->_save_vocabulary_to_sql(\%vocabulary, $self->{main}->{username});
       } else {
-        $vocab_path = File::Spec->catfile($nn_data_dir, 'vocabulary.data');
+        $vocab_path = File::Spec->catfile($nn_data_dir, 'vocabulary-' . $self->{main}->{username} . '.data');
         $vocab_path = Mail::SpamAssassin::Util::untaint_file_path($vocab_path);
         eval {
           store(\%vocabulary, $vocab_path) or die "store failed";
@@ -520,7 +520,7 @@ sub learn_message {
     push(@training_data, { label => $isspam, text => $text } );
   }
 
-  my $dataset_path = File::Spec->catfile($nn_data_dir, 'fann.model');
+  my $dataset_path = File::Spec->catfile($nn_data_dir, 'fann-' . $self->{main}->{username} . '.model');
 
   # Extract the text and labels
   my @email_texts = map { $_->{text} } @training_data;
@@ -663,7 +663,7 @@ sub _check_neuralnetwork {
   }
   my $input_vector = $feature_vectors->[0];
 
-  my $dataset_path = File::Spec->catfile($nn_data_dir, 'fann.model');
+  my $dataset_path = File::Spec->catfile($nn_data_dir, 'fann-' . $self->{main}->{username} . '.model');
   if(not -f $dataset_path) {
     $pms->{neuralnetwork_prediction} = undef;
     dbg("Can't predict without a trained model, $dataset_path cannot be read");
