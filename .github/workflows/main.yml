@@ -30,7 +30,7 @@ jobs:
       - name: install Apache SpamAssassin
         run: |
           sudo apt-get update
-          sudo apt-get -y install spamassassin
+          sudo apt-get -y install spamassassin libai-fann-perl
       - name: update Apache SpamAssassin rules
         run: sudo sa-update
       - name: Regression tests
