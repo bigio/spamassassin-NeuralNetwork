@@ -327,11 +327,11 @@ sub _get_first_visible_text {
 sub _text_to_features {
     my ($self, $conf, $nn_data_dir, $train, $label, @emails) = @_;
 
-    my $MIN_WORD_LEN = $conf->{neuralnetwork_min_word_len};
-    my $MAX_WORD_LEN = $conf->{neuralnetwork_max_word_len};
-    my $VOCAB_CAP    = $conf->{neuralnetwork_vocab_cap};
-    my %STOPWORDS    = map { lc($_) => 1 } split /\s+/, $conf->{neuralnetwork_stopwords};
-    my $STOPWORDS_REF = \%STOPWORDS;
+    my $min_word_len = $conf->{neuralnetwork_min_word_len};
+    my $max_word_len = $conf->{neuralnetwork_max_word_len};
+    my $vocab_cap    = $conf->{neuralnetwork_vocab_cap};
+    my %stopwords    = map { lc($_) => 1 } split /\s+/, $conf->{neuralnetwork_stopwords};
+    my $stopwords_ref = \%stopwords;
 
     return unless defined $nn_data_dir;
     $nn_data_dir = Mail::SpamAssassin::Util::untaint_file_path($nn_data_dir);
@@ -391,9 +391,9 @@ sub _text_to_features {
       # replace HTML entities and punctuation with spaces
       $text =~ s/&[a-z#0-9]+;/ /g;
       $text =~ s{[^\p{L}\p{N}\-]}{ }g;
-      my @tokens = grep { length($_) >= $MIN_WORD_LEN && length($_) <= $MAX_WORD_LEN } split /\s+/, $text;
+      my @tokens = grep { length($_) >= $min_word_len && length($_) <= $max_word_len } split /\s+/, $text;
       @tokens = grep { $_ !~ /^\d+$/ } @tokens;         # drop pure numbers
-      @tokens = grep { !$STOPWORDS_REF->{$_} } @tokens;     # drop stopwords
+      @tokens = grep { !$stopwords_ref->{$_} } @tokens;     # drop stopwords
       return @tokens;
     };
 
@@ -435,10 +435,10 @@ sub _text_to_features {
 
       # Prune vocabulary if needed: keep top VOCAB_CAP by total count
       my $terms_count = scalar keys %{ $vocabulary{terms} };
-      if ($terms_count > $VOCAB_CAP) {
+      if ($terms_count > $vocab_cap) {
         my @top = sort { ($vocabulary{terms}{$b}{total}||0) <=> ($vocabulary{terms}{$a}{total}||0) } keys %{ $vocabulary{terms} };
         my %pruned;
-        for my $i (0 .. $VOCAB_CAP-1) {
+        for my $i (0 .. $vocab_cap-1) {
           last unless defined $top[$i];
           $pruned{$top[$i]} = $vocabulary{terms}{$top[$i]};
         }
@@ -506,10 +506,10 @@ sub learn_message {
   my $isspam = $params->{isspam};
   my $msg = $params->{msg};
   my $conf = $self->{main}->{conf};
-  my $MIN_TEXT_LEN = $conf->{neuralnetwork_min_text_len};
-  my $LEARNING_RATE = $conf->{neuralnetwork_learning_rate};
-  my $MOMENTUM = $conf->{neuralnetwork_momentum};
-  my $TRAIN_EPOCHS = $conf->{neuralnetwork_train_epochs};
+  my $min_text_len = $conf->{neuralnetwork_min_text_len};
+  my $learning_rate = $conf->{neuralnetwork_learning_rate};
+  my $momentum = $conf->{neuralnetwork_momentum};
+  my $train_epochs = $conf->{neuralnetwork_train_epochs};
   my @training_data;
   my $autolearn = defined $self->{autolearn};
 
@@ -544,7 +544,7 @@ sub learn_message {
 
   if(defined $msg) {
     my $text = _get_first_visible_text($msg);
-    if (!defined $text || length($text) < $MIN_TEXT_LEN) {
+    if (!defined $text || length($text) < $min_text_len) {
       dbg("Not enough text, skipping neural network processing");
       return;
     }
@@ -581,11 +581,11 @@ sub learn_message {
     $network->hidden_activation_function(FANN_SIGMOID);
     $network->output_activation_function(FANN_SIGMOID);
   }
-  $network->learning_rate($LEARNING_RATE);
-  $network->learning_momentum($MOMENTUM);
+  $network->learning_rate($learning_rate);
+  $network->learning_momentum($momentum);
 
   # Use multiple-epoch incremental training for each feature vector to increase learning effect
-  my $epochs = $TRAIN_EPOCHS;
+  my $epochs = $train_epochs;
   for my $e (1 .. $epochs) {
     for my $i (0 .. $#$feature_vectors) {
       my $input = $feature_vectors->[$i];
@@ -663,12 +663,12 @@ sub _check_neuralnetwork {
   }
 
   my $conf = $self->{main}->{conf};
-  my $MIN_TEXT_LEN = $conf->{neuralnetwork_min_text_len};
-  my $SPAM_THRESHOLD = $conf->{neuralnetwork_spam_threshold};
-  my $HAM_THRESHOLD  = $conf->{neuralnetwork_ham_threshold};
+  my $min_text_len = $conf->{neuralnetwork_min_text_len};
+  my $spam_threshold = $conf->{neuralnetwork_spam_threshold};
+  my $ham_threshold  = $conf->{neuralnetwork_ham_threshold};
 
   my $email_to_predict = _get_first_visible_text($msg);
-  if(!defined $email_to_predict || length($email_to_predict) < $MIN_TEXT_LEN) {
+  if(!defined $email_to_predict || length($email_to_predict) < $min_text_len) {
     $pms->{neuralnetwork_prediction} = undef;
     dbg("Too short email text");
     return;
@@ -738,10 +738,10 @@ sub _check_neuralnetwork {
     return;
   }
 
-  if ($prediction > $SPAM_THRESHOLD) {
+  if ($prediction > $spam_threshold) {
     $pms->{neuralnetwork_spam} = 1;
     dbg("Prediction for email : spam ($prediction)");
-  } elsif ($prediction < $HAM_THRESHOLD) {
+  } elsif ($prediction < $ham_threshold) {
     $pms->{neuralnetwork_ham} = 1;
     dbg("Prediction for email : ham ($prediction)");
   } else {
@@ -947,7 +947,7 @@ sub _load_vocabulary_from_sql {
   );
 
   my $conf = $self->{main}->{conf};
-  my $VOCAB_CAP = $conf->{neuralnetwork_vocab_cap};
+  my $vocab_cap = $conf->{neuralnetwork_vocab_cap};
 
   eval {
     my $sth = $self->{dbh}->prepare("
@@ -975,15 +975,15 @@ sub _load_vocabulary_from_sql {
 
     # Prune vocabulary if needed: keep top VOCAB_CAP by total count
     my $terms_count = scalar keys %{ $vocabulary{terms} };
-    if ($terms_count > $VOCAB_CAP) {
+    if ($terms_count > $vocab_cap) {
       my @top = sort { ($vocabulary{terms}{$b}{total}||0) <=> ($vocabulary{terms}{$a}{total}||0) } keys %{ $vocabulary{terms} };
       my %pruned;
-      for my $i (0 .. $VOCAB_CAP-1) {
+      for my $i (0 .. $vocab_cap-1) {
         last unless defined $top[$i];
         $pruned{$top[$i]} = $vocabulary{terms}{$top[$i]};
       }
       $vocabulary{terms} = \%pruned;
-      dbg("Pruned in-memory vocabulary from $terms_count to $VOCAB_CAP terms for user: $username");
+      dbg("Pruned in-memory vocabulary from $terms_count to $vocab_cap terms for user: $username");
     }
     1;
   } or do {
