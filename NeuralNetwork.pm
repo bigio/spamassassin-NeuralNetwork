@@ -122,6 +122,7 @@ When SpamAssassin declares a message a clear spam or ham during the message
 scan, and launches the auto-learn process, message is autolearned as spam/ham
 in the same way as during the manual learning.
 Value 0 at this option disables the auto-learn process for this plugin.
+
 =item neuralnetwork_dsn		(default: none)
 
 The DBI dsn of the database to use.
