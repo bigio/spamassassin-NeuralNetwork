@@ -92,6 +92,14 @@ Maximum token length considered when building the vocabulary and feature vectors
 
 Maximum number of vocabulary terms to retain; least-frequent terms are pruned when exceeded.
 
+=item neuralnetwork_min_spam_count n (default: 24)
+
+Minimum number of spam messages in the vocabulary required to enable prediction.
+
+=item neuralnetwork_min_ham_count n (default: 24)
+
+Minimum number of ham messages in the vocabulary required to enable prediction.
+
 =item neuralnetwork_spam_threshold f (default: 0.8)
 
 Prediction values above this threshold are considered spam.
@@ -185,6 +193,18 @@ SQLite.
     setting => 'neuralnetwork_vocab_cap',
     is_admin => 1,
     default => 10000,
+    type => $Mail::SpamAssassin::Conf::CONF_TYPE_NUMERIC,
+  });
+  push(@cmds, {
+    setting => 'neuralnetwork_min_spam_count',
+    is_admin => 1,
+    default => 10,
+    type => $Mail::SpamAssassin::Conf::CONF_TYPE_NUMERIC,
+  });
+  push(@cmds, {
+    setting => 'neuralnetwork_min_ham_count',
+    is_admin => 1,
+    default => 10,
     type => $Mail::SpamAssassin::Conf::CONF_TYPE_NUMERIC,
   });
   push(@cmds, {
@@ -352,6 +372,16 @@ sub _text_to_features {
     $vocabulary{_doc_count} ||= 0;
     $vocabulary{_spam_count} ||= 0;
     $vocabulary{_ham_count} ||= 0;
+
+    # Ensure we have enough spam and ham examples in the vocabulary
+    my $min_spam = $conf->{neuralnetwork_min_spam_count} || 0;
+    my $min_ham  = $conf->{neuralnetwork_min_ham_count} || 0;
+    if (!$train) {
+      if ( ($vocabulary{_spam_count} < $min_spam) || ($vocabulary{_ham_count} < $min_ham) ) {
+        dbg("Insufficient spam/ham data for prediction: spam=".$vocabulary{_spam_count}.", ham=".$vocabulary{_ham_count});
+        return ([], 0);
+      }
+    }
 
     # tokenize helper
     my $tokenize = sub {
