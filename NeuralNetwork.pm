@@ -198,13 +198,13 @@ SQLite.
   push(@cmds, {
     setting => 'neuralnetwork_min_spam_count',
     is_admin => 1,
-    default => 10,
+    default => 24,
     type => $Mail::SpamAssassin::Conf::CONF_TYPE_NUMERIC,
   });
   push(@cmds, {
     setting => 'neuralnetwork_min_ham_count',
     is_admin => 1,
-    default => 10,
+    default => 24,
     type => $Mail::SpamAssassin::Conf::CONF_TYPE_NUMERIC,
   });
   push(@cmds, {
@@ -374,8 +374,8 @@ sub _text_to_features {
     $vocabulary{_ham_count} ||= 0;
 
     # Ensure we have enough spam and ham examples in the vocabulary
-    my $min_spam = $conf->{neuralnetwork_min_spam_count} || 0;
-    my $min_ham  = $conf->{neuralnetwork_min_ham_count} || 0;
+    my $min_spam = $conf->{neuralnetwork_min_spam_count};
+    my $min_ham  = $conf->{neuralnetwork_min_ham_count};
     if (!$train) {
       if ( ($vocabulary{_spam_count} < $min_spam) || ($vocabulary{_ham_count} < $min_ham) ) {
         dbg("Insufficient spam/ham data for prediction: spam=".$vocabulary{_spam_count}.", ham=".$vocabulary{_ham_count});
