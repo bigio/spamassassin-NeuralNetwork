@@ -23,7 +23,9 @@ my $salearnrun = qx{which sa-learn 2>&1};
 tstprefs("
   loadplugin Mail::SpamAssassin::Plugin::NeuralNetwork ../../NeuralNetwork.pm
 
-  neuralnetwork_data_dir t/NN
+  neuralnetwork_data_dir	t/NN
+  neuralnetwork_min_spam_count	0
+  neuralnetwork_min_ham_count	0
 
   body		NN_SPAM		eval:check_neuralnetwork_spam()
   describe	NN_SPAM		Email considered as spam by Neural Network
