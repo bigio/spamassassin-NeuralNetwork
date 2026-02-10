@@ -296,7 +296,7 @@ sub finish_parsing_end {
     return;
   }
 
-  my $dataset_path = File::Spec->catfile($nn_data_dir, 'fann-' . $self->{main}->{username} . '.model');
+  my $dataset_path = File::Spec->catfile($nn_data_dir, 'fann-' . lc($self->{main}->{username}) . '.model');
   if (-f $dataset_path) {
     eval {
       $self->{neural_model} = AI::FANN->new_from_file($dataset_path);
@@ -354,7 +354,7 @@ sub _text_to_features {
 
     # If not loaded from SQL, try loading from file
     if (!keys %{$vocabulary{terms} || {}}) {
-      my $vocab_path = File::Spec->catfile($nn_data_dir, 'vocabulary-' . $self->{main}->{username} . '.data');
+      my $vocab_path = File::Spec->catfile($nn_data_dir, 'vocabulary-' . lc($self->{main}->{username}) . '.data');
       if(-f $vocab_path) {
         eval {
           my $ref = retrieve($vocab_path);
@@ -449,7 +449,7 @@ sub _text_to_features {
       if (defined $conf->{neuralnetwork_dsn} && $self && $self->{dbh}) {
         $self->_save_vocabulary_to_sql(\%vocabulary, $self->{main}->{username});
       } else {
-        $vocab_path = File::Spec->catfile($nn_data_dir, 'vocabulary-' . $self->{main}->{username} . '.data');
+        $vocab_path = File::Spec->catfile($nn_data_dir, 'vocabulary-' . lc($self->{main}->{username}) . '.data');
         $vocab_path = Mail::SpamAssassin::Util::untaint_file_path($vocab_path);
         eval {
           store(\%vocabulary, $vocab_path) or die "store failed";
@@ -551,7 +551,7 @@ sub learn_message {
     push(@training_data, { label => $isspam, text => $text } );
   }
 
-  my $dataset_path = File::Spec->catfile($nn_data_dir, 'fann-' . $self->{main}->{username} . '.model');
+  my $dataset_path = File::Spec->catfile($nn_data_dir, 'fann-' . lc($self->{main}->{username}) . '.model');
 
   # Extract the text and labels
   my @email_texts = map { $_->{text} } @training_data;
@@ -694,7 +694,7 @@ sub _check_neuralnetwork {
   }
   my $input_vector = $feature_vectors->[0];
 
-  my $dataset_path = File::Spec->catfile($nn_data_dir, 'fann-' . $self->{main}->{username} . '.model');
+  my $dataset_path = File::Spec->catfile($nn_data_dir, 'fann-' . lc($self->{main}->{username}) . '.model');
   if(not -f $dataset_path) {
     $pms->{neuralnetwork_prediction} = undef;
     dbg("Can't predict without a trained model, $dataset_path cannot be read");
@@ -827,7 +827,7 @@ sub _save_msgid_to_neural_seen {
   eval {
     # Flag: 'S' for spam, 'H' for ham
     my $flag = $isspam ? 'S' : 'H';
-    my $username = $self->{main}->{username} || 'default';
+    my $username = lc($self->{main}->{username}) || 'default';
  
     # Use INSERT IGNORE to avoid duplicate key errors
     my $driver = $self->{dbh}->{Driver}->{Name};
@@ -900,7 +900,7 @@ sub _save_vocabulary_to_sql {
     foreach my $keyword (keys %{$terms}) {
       my $term_data = $terms->{$keyword};
       $sth_upsert->execute(
-        $username,
+        lc($username),
         $keyword,
         $term_data->{total} || 0,
         $term_data->{docs} || 0,
@@ -913,8 +913,9 @@ sub _save_vocabulary_to_sql {
     dbg("Saved $count vocabulary terms to SQL for user: $username");
 
     # Invalidate cache for this user
+    my $lc_user = lc($username);
     if (defined $self->{_vocab_cache}) {
-      delete $self->{_vocab_cache}{$username};
+      delete $self->{_vocab_cache}{$lc_user};
     }
     1;
   } or do {
@@ -934,9 +935,10 @@ sub _load_vocabulary_from_sql {
     $self->{_vocab_cache} = {};
   }
 
-  if (exists $self->{_vocab_cache}{$username}) {
-    dbg("Using cached vocabulary for user: $username");
-    return $self->{_vocab_cache}{$username};
+  my $lc_user = lc($username);
+  if (exists $self->{_vocab_cache}{$lc_user}) {
+    dbg("Using cached vocabulary for user: $lc_user");
+    return $self->{_vocab_cache}{$lc_user};
   }
 
   my %vocabulary = (
@@ -955,7 +957,7 @@ sub _load_vocabulary_from_sql {
       FROM neural_vocabulary
       WHERE username = ?
     ");
-    $sth->execute($username);
+    $sth->execute($lc_user);
 
     my $rows = $sth->fetchall_arrayref();
     my $count = 0;
@@ -971,7 +973,7 @@ sub _load_vocabulary_from_sql {
       $count++;
     }
 
-    dbg("Loaded $count vocabulary terms from SQL for user: $username");
+    dbg("Loaded $count vocabulary terms from SQL for user: $lc_user");
 
     # Prune vocabulary if needed: keep top VOCAB_CAP by total count
     my $terms_count = scalar keys %{ $vocabulary{terms} };
@@ -983,7 +985,7 @@ sub _load_vocabulary_from_sql {
         $pruned{$top[$i]} = $vocabulary{terms}{$top[$i]};
       }
       $vocabulary{terms} = \%pruned;
-      dbg("Pruned in-memory vocabulary from $terms_count to $vocab_cap terms for user: $username");
+      dbg("Pruned in-memory vocabulary from $terms_count to $vocab_cap terms for user: $lc_user");
     }
     1;
   } or do {
