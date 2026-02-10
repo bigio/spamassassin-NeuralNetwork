@@ -970,6 +970,9 @@ sub _load_vocabulary_from_sql {
         spam => $spam,
         ham => $ham
       };
+      $vocabulary{_doc_count}++ if($docs eq 1);
+      $vocabulary{_ham_count}++ if($ham eq 1);
+      $vocabulary{_spam_count}++ if($spam eq 1);
       $count++;
     }
 
