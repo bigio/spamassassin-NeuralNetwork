@@ -833,7 +833,7 @@ sub _save_msgid_to_neural_seen {
     my $driver = $self->{dbh}->{Driver}->{Name};
     my $insert_sql;
 
-    if (lc($driver) eq 'mysql') {
+    if ($driver =~ /mysql|mariadb/i) {
       # MySQL: INSERT IGNORE
       $insert_sql = "
         INSERT IGNORE INTO neural_seen (username, msgid, flag)
@@ -872,7 +872,7 @@ sub _save_vocabulary_to_sql {
     my $driver = $self->{dbh}->{Driver}->{Name};
     my $upsert_sql;
 
-    if (lc($driver) eq 'mysql') {
+    if ($driver =~ /mysql|mariadb/i) {
       $upsert_sql = "
         INSERT INTO neural_vocabulary (username, keyword, total_count, docs_count, spam_count, ham_count)
         VALUES (?, ?, ?, ?, ?, ?)
