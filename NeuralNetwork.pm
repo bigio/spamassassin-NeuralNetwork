@@ -513,9 +513,18 @@ sub learn_message {
   my @training_data;
   my $autolearn = defined $self->{autolearn};
 
+  my $msgid = $msg->get_msgid();
+  $msgid //= $msg->generate_msgid();
+
   if ($autolearn && !$conf->{neuralnetwork_autolearn}) {
     dbg("autolearning disabled, quitting");
     return 0;
+  }
+
+  # do not relearn messages
+  if($self->_is_msgid_in_neural_seen($msgid)) {
+    dbg("Message $msgid found in neural_seen, skipping");
+    return;
   }
 
   dbg("learning a message");
@@ -610,8 +619,6 @@ sub learn_message {
 
     # Record message as learned to prevent re-learning
     if (defined $msg) {
-      my $msgid = $msg->get_msgid();
-      $msgid //= $msg->generate_msgid();
       if (defined $msgid && length($msgid) > 0) {
         $self->_save_msgid_to_neural_seen($msgid, $isspam);
       }
@@ -855,6 +862,36 @@ sub _save_msgid_to_neural_seen {
   } or do {
     my $err = $@ || 'unknown';
     dbg("Failed to save message ID to neural_seen: $err");
+  };
+}
+
+sub _is_msgid_in_neural_seen {
+  my ($self, $msgid) = @_;
+  return unless defined $msgid && length($msgid) > 0;
+
+  # Save to file-based neural_seen if no SQL configured
+  if (!defined $self->{main}->{conf}->{neuralnetwork_dsn} || !$self->{dbh}) {
+    return; # File-based storage could be added here if needed
+  }
+
+  eval {
+    my $username = lc($self->{main}->{username}) || 'default';
+
+    my $select_sql = "
+        SELECT id FROM neural_seen WHERE username=? AND msgid=?
+      ";
+    my $sth = $self->{dbh}->prepare($select_sql);
+    $sth->execute($username, $msgid);
+    my $rows = $sth->fetchall_arrayref();
+
+    if(scalar @{$rows} > 0) {
+      # Message $msgid found
+      return 1;
+    }
+    1;
+  } or do {
+    my $err = $@ || 'unknown';
+    dbg("Failed to find message ID on neural_seen: $err");
   };
 }
 
