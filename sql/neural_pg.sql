@@ -3,7 +3,6 @@
 -- CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
 
 CREATE TABLE neural_seen (
-  id SERIAL PRIMARY KEY,
   username VARCHAR(200) NOT NULL DEFAULT 'default',
   msgid VARCHAR(200) NOT NULL DEFAULT '',
   flag CHAR(1) NOT NULL DEFAULT '',
@@ -14,7 +13,6 @@ CREATE INDEX neural_seen_username_idx ON neural_seen(username);
 CREATE INDEX neural_seen_msgid_idx ON neural_seen(msgid);
 
 CREATE TABLE neural_vocabulary (
-  id SERIAL PRIMARY KEY,
   username VARCHAR(200) NOT NULL DEFAULT '',
   keyword VARCHAR(256) NOT NULL DEFAULT '',
   total_count INTEGER NOT NULL DEFAULT 0,

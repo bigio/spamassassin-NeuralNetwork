@@ -37,7 +37,7 @@ use strict;
 use warnings;
 use re 'taint';
 
-my $VERSION = 0.1;
+my $VERSION = 0.2;
 
 use AI::FANN qw(:all);
 use Storable qw(store retrieve);
@@ -794,7 +794,6 @@ sub _create_vocabulary_table {
     if ($self->{dbh}->{Driver}->{Name} eq 'SQLite') {
       $self->{dbh}->do("
         CREATE TABLE IF NOT EXISTS neural_vocabulary (
-          id INTEGER PRIMARY KEY AUTOINCREMENT,
           username VARCHAR(200) NOT NULL DEFAULT '',
           keyword VARCHAR(256) NOT NULL DEFAULT '',
           total_count INTEGER NOT NULL DEFAULT 0,
@@ -806,7 +805,6 @@ sub _create_vocabulary_table {
       ");
       $self->{dbh}->do("
         CREATE TABLE IF NOT EXISTS neural_seen (
-          id INTEGER PRIMARY KEY AUTOINCREMENT,
           username VARCHAR(200) NOT NULL DEFAULT 'default',
           msgid VARCHAR(200) NOT NULL DEFAULT '',
           flag CHAR(1) NOT NULL DEFAULT '',
