@@ -837,10 +837,9 @@ sub _save_msgid_to_neural_seen {
     my $username = lc($self->{main}->{username}) || 'default';
  
     # Use INSERT IGNORE to avoid duplicate key errors
-    my $driver = $self->{dbh}->{Driver}->{Name};
     my $insert_sql;
 
-    if ($driver =~ /mysql|mariadb/i) {
+    if ($self->{main}->{conf}->{neuralnetwork_dsn} =~ /^dbi:(?:mysql|MariaDB)/i) {
       # MySQL: INSERT IGNORE
       $insert_sql = "
         INSERT IGNORE INTO neural_seen (username, msgid, flag)
@@ -878,20 +877,22 @@ sub _is_msgid_in_neural_seen {
     my $username = lc($self->{main}->{username}) || 'default';
 
     my $select_sql = "
-        SELECT id FROM neural_seen WHERE username=? AND msgid=?
+        SELECT flag FROM neural_seen WHERE username=? AND msgid=?
       ";
     my $sth = $self->{dbh}->prepare($select_sql);
     $sth->execute($username, $msgid);
     my $rows = $sth->fetchall_arrayref();
 
-    if(scalar @{$rows} > 0) {
+    if(scalar @$rows > 0) {
       # Message $msgid found
       return 1;
     }
-    1;
   } or do {
-    my $err = $@ || 'unknown';
-    dbg("Failed to find message ID on neural_seen: $err");
+    if($@) {
+      dbg("Failed to find message ID on neural_seen: $@");
+    } else {
+      return 0;
+    }
   };
 }
 
@@ -906,10 +907,9 @@ sub _save_vocabulary_to_sql {
     return unless scalar keys %{$terms};
 
     # Use ON DUPLICATE KEY UPDATE for MySQL or ON CONFLICT for other databases
-    my $driver = $self->{dbh}->{Driver}->{Name};
     my $upsert_sql;
 
-    if ($driver =~ /mysql|mariadb/i) {
+    if ($self->{main}->{conf}->{neuralnetwork_dsn} =~ /^dbi:(?:mysql|MariaDB)/i) {
       $upsert_sql = "
         INSERT INTO neural_vocabulary (username, keyword, total_count, docs_count, spam_count, ham_count)
         VALUES (?, ?, ?, ?, ?, ?)
