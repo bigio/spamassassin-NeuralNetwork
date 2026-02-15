@@ -1,4 +1,4 @@
-# Note for users upgrading to version 0.2
+# Note for users upgrading from version 0.1
 - the `id` field is no more used and should be removed from SQL tables    
   ex.:    
   ALTER TABLE `neural_seen` DROP `id`;    
