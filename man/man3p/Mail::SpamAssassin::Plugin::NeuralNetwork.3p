@@ -58,7 +58,7 @@
 .\" ========================================================================
 .\"
 .IX Title "NeuralNetwork 3"
-.TH NeuralNetwork 3 2026-01-29 "perl v5.42.0" "User Contributed Perl Documentation"
+.TH NeuralNetwork 3 2026-02-16 "perl v5.42.0" "User Contributed Perl Documentation"
 .\" For nroff, turn off justification.  Always turn off hyphenation; it makes
 .\" way too many mistakes in technical documents.
 .if n .ad l
@@ -88,6 +88,12 @@ Maximum token length considered when building the vocabulary and feature vectors
 .IP "neuralnetwork_vocab_cap n (default: 10000)" 4
 .IX Item "neuralnetwork_vocab_cap n (default: 10000)"
 Maximum number of vocabulary terms to retain; least\-frequent terms are pruned when exceeded.
+.IP "neuralnetwork_min_spam_count n (default: 24)" 4
+.IX Item "neuralnetwork_min_spam_count n (default: 24)"
+Minimum number of spam messages in the vocabulary required to enable prediction.
+.IP "neuralnetwork_min_ham_count n (default: 24)" 4
+.IX Item "neuralnetwork_min_ham_count n (default: 24)"
+Minimum number of ham messages in the vocabulary required to enable prediction.
 .IP "neuralnetwork_spam_threshold f (default: 0.8)" 4
 .IX Item "neuralnetwork_spam_threshold f (default: 0.8)"
 Prediction values above this threshold are considered spam.
@@ -103,9 +109,18 @@ Momentum used for training updates.
 .IP "neuralnetwork_train_epochs n (default: 50)" 4
 .IX Item "neuralnetwork_train_epochs n (default: 50)"
 Number of training epochs to perform when learning a single message.
+.IP "neuralnetwork_train_algorithm FANN_TRAIN_QUICKPROP|FANN_TRAIN_RPROP|FANN_TRAIN_BATCH|FANN_TRAIN_INCREMENTAL|FANN_TRAIN_SARPROP (default: FANN_TRAIN_RPROP)" 4
+.IX Item "neuralnetwork_train_algorithm FANN_TRAIN_QUICKPROP|FANN_TRAIN_RPROP|FANN_TRAIN_BATCH|FANN_TRAIN_INCREMENTAL|FANN_TRAIN_SARPROP (default: FANN_TRAIN_RPROP)"
+Algorithm used by Fann neural network used when training, might increase speed depending on the data volume.
 .IP "neuralnetwork_stopwords words (default: ""the and for with that this from there their have be not but you your"")" 4
 .IX Item "neuralnetwork_stopwords words (default: ""the and for with that this from there their have be not but you your"")"
 Space\-separated list of stopwords to ignore when tokenizing text.
+.IP "neuralnetwork_autolearn 0|1 (default 0)" 4
+.IX Item "neuralnetwork_autolearn 0|1 (default 0)"
+When SpamAssassin declares a message a clear spam or ham during the message
+scan, and launches the auto\-learn process, message is autolearned as spam/ham
+in the same way as during the manual learning.
+Value 0 at this option disables the auto\-learn process for this plugin.
 .IP "neuralnetwork_dsn		(default: none)" 4
 .IX Item "neuralnetwork_dsn (default: none)"
 The DBI dsn of the database to use.

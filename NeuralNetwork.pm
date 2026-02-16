@@ -120,7 +120,7 @@ Momentum used for training updates.
 
 Number of training epochs to perform when learning a single message.
 
-=item B<neuralnetwork_train_algorithm> FANN_TRAIN_QUICKPROP|FANN_TRAIN_RPROP|FANN_TRAIN_BATCH|FANN_TRAIN_INCREMENTAL|FANN_TRAIN_SARPROP (default: FANN_TRAIN_RPROP)
+=item neuralnetwork_train_algorithm FANN_TRAIN_QUICKPROP|FANN_TRAIN_RPROP|FANN_TRAIN_BATCH|FANN_TRAIN_INCREMENTAL|FANN_TRAIN_SARPROP (default: FANN_TRAIN_RPROP)
 
 Algorithm used by Fann neural network used when training, might increase speed depending on the data volume.
 
@@ -128,7 +128,7 @@ Algorithm used by Fann neural network used when training, might increase speed d
 
 Space-separated list of stopwords to ignore when tokenizing text.
 
-=item B<neuralnetwork_autolearn> 0|1 (default 0)
+=item neuralnetwork_autolearn 0|1 (default 0)
 
 When SpamAssassin declares a message a clear spam or ham during the message
 scan, and launches the auto-learn process, message is autolearned as spam/ham
