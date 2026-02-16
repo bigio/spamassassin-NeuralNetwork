@@ -2,6 +2,7 @@
 
 use lib '.'; use lib 't';
 
+use File::Path;
 use Test::More;
 plan tests => 2;
 
@@ -14,7 +15,7 @@ sub tstprefs {
 
 sub tstcleanup {
   unlink 't/rules/NeuralNetwork.cf';
-  unlink glob('t/NN/*');
+  rmtree 't/NN';
 }
 
 my $sarun = qx{which spamassassin 2>&1};
@@ -37,6 +38,7 @@ tstprefs("
 
 ");
 
+mkdir 't/NN';
 chomp($sarun);
 chomp($salearnrun);
 my $test = qx($salearnrun --siteconfigpath=t/rules --spam t/data/spam-001);
