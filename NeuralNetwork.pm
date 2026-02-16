@@ -120,7 +120,7 @@ Momentum used for training updates.
 
 Number of training epochs to perform when learning a single message.
 
-=item neuralnetwork_train_algorithm FANN_TRAIN_QUICKPROP|FANN_TRAIN_RPROP|FANN_TRAIN_BATCH|FANN_TRAIN_INCREMENTAL|FANN_TRAIN_SARPROP (default: FANN_TRAIN_RPROP)
+=item neuralnetwork_train_algorithm FANN_TRAIN_QUICKPROP|FANN_TRAIN_RPROP|FANN_TRAIN_BATCH|FANN_TRAIN_INCREMENTAL (default: FANN_TRAIN_RPROP)
 
 Algorithm used by Fann neural network used when training, might increase speed depending on the data volume.
 
