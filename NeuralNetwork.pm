@@ -587,8 +587,8 @@ sub learn_message {
     $network = $self->{neural_model};
   } else {
     $network = AI::FANN->new_standard($num_input, $num_hidden_neurons, $num_output_neurons);
-    $network->hidden_activation_function(FANN_SIGMOID);
-    $network->output_activation_function(FANN_SIGMOID);
+    $network->hidden_activation_function(FANN_SIGMOID_STEPWISE);
+    $network->output_activation_function(FANN_SIGMOID_STEPWISE);
   }
   $network->learning_rate($learning_rate);
   $network->learning_momentum($momentum);
