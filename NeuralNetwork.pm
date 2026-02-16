@@ -120,6 +120,10 @@ Momentum used for training updates.
 
 Number of training epochs to perform when learning a single message.
 
+=item B<neuralnetwork_train_algorithm> FANN_TRAIN_QUICKPROP|FANN_TRAIN_RPROP|FANN_TRAIN_BATCH|FANN_TRAIN_INCREMENTAL|FANN_TRAIN_SARPROP (default: FANN_TRAIN_RPROP)
+
+Algorithm used by Fann neural network used when training, might increase speed depending on the data volume.
+
 =item neuralnetwork_stopwords words (default: "the and for with that this from there their have be not but you your")
 
 Space-separated list of stopwords to ignore when tokenizing text.
@@ -235,6 +239,25 @@ SQLite.
     setting => 'neuralnetwork_train_epochs',
     is_admin => 1,
     default => 50,
+    type => $Mail::SpamAssassin::Conf::CONF_TYPE_NUMERIC,
+  });
+  push(@cmds, {
+    setting => 'neuralnetwork_train_algorithm',
+    is_admin => 1,
+    default => FANN_TRAIN_RPROP,
+    code        => sub {
+        my ($self, $key, $value, $line) = @_;
+	my %algorithm_map = (
+            'FANN_TRAIN_QUICKPROP'    => FANN_TRAIN_QUICKPROP,
+            'FANN_TRAIN_RPROP'        => FANN_TRAIN_RPROP,
+            'FANN_TRAIN_BATCH'        => FANN_TRAIN_BATCH,
+            'FANN_TRAIN_INCREMENTAL'  => FANN_TRAIN_INCREMENTAL,
+        );
+        if (!exists $algorithm_map{$value}) {
+            return $Mail::SpamAssassin::Conf::INVALID_VALUE;
+        }
+        $self->{neuralnetwork_train_algorithm} = $algorithm_map{$value};
+    },
     type => $Mail::SpamAssassin::Conf::CONF_TYPE_NUMERIC,
   });
   push(@cmds, {
@@ -510,6 +533,7 @@ sub learn_message {
   my $learning_rate = $conf->{neuralnetwork_learning_rate};
   my $momentum = $conf->{neuralnetwork_momentum};
   my $train_epochs = $conf->{neuralnetwork_train_epochs};
+  my $train_algorithm = $conf->{neuralnetwork_train_algorithm};
   my @training_data;
   my $autolearn = defined $self->{autolearn};
 
@@ -592,6 +616,7 @@ sub learn_message {
   }
   $network->learning_rate($learning_rate);
   $network->learning_momentum($momentum);
+  $network->training_algorithm($train_algorithm);
 
   # Use multiple-epoch incremental training for each feature vector to increase learning effect
   my $epochs = $train_epochs;
