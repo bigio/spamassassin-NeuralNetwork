@@ -654,6 +654,36 @@ sub learn_message {
   return;
 }
 
+sub forget_message {
+  my ($self, $params) = @_;
+
+  my $username = $self->{main}->{username};
+  my $msg = $params->{msg};
+  my $msgid = $msg->get_msgid();
+  $msgid //= $msg->generate_msgid();
+
+  if($self->_is_msgid_in_neural_seen($msgid)) {
+    dbg("Message $msgid found in neural_seen, forgetting");
+    $self->{forgetting} = 1;
+    my $del_sql;
+
+    if ($self->{main}->{conf}->{neuralnetwork_dsn} =~ /^dbi:/i) {
+      $del_sql = "
+        DELETE FROM neural_seen
+        WHERE username = ? AND msgid = ?
+      ";
+    } else {
+      dbg("It's not possible to forget a message if neuralnetwork_dsn has not been configured");
+      return;
+    }
+    my $sth = $self->{dbh}->prepare($del_sql);
+    $sth->execute($username, $msgid);
+    $self->{forgetting} = undef;
+    return 1;
+  }
+  return 0;
+}
+
 sub check_neuralnetwork_spam {
   my ($self, $pms) = @_;
   
@@ -891,9 +921,9 @@ sub _is_msgid_in_neural_seen {
   my ($self, $msgid) = @_;
   return unless defined $msgid && length($msgid) > 0;
 
-  # Save to file-based neural_seen if no SQL configured
+  # XXX Save to file-based neural_seen if no SQL configured
   if (!defined $self->{main}->{conf}->{neuralnetwork_dsn} || !$self->{dbh}) {
-    return; # File-based storage could be added here if needed
+    return;
   }
 
   eval {
