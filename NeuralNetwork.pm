@@ -677,7 +677,10 @@ sub forget_message {
       return;
     }
     my $sth = $self->{dbh}->prepare($del_sql);
-    $sth->execute($username, $msgid);
+    if(not $sth->execute($username, $msgid)) {
+      info("Error forgetting message $msgid");
+      return 0;
+    }
     $self->{forgetting} = undef;
     return 1;
   }
@@ -907,7 +910,10 @@ sub _save_msgid_to_neural_seen {
     }
 
     my $sth = $self->{dbh}->prepare($insert_sql);
-    $sth->execute($username, $msgid, $flag);
+    if(not $sth->execute($username, $msgid, $flag)) {
+      info("Error learning from message $msgid");
+      return;
+    }
 
     dbg("Recorded learned message: $msgid");
     1;
