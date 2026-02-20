@@ -331,20 +331,6 @@ sub finish_parsing_end {
   }
 }
 
-# Helper: extract first visible text part
-sub _get_first_visible_text {
-  my ($msg) = @_;
-  return unless defined $msg;
-  my $email_text = '';
-  my @parts = $msg->find_parts(qr@^text/(?:html|plain)$@);
-  foreach my $part (@parts) {
-    next if not exists $part->{visible_rendered};
-    $email_text = $part->{visible_rendered} || '';
-    last;
-  }
-  return $email_text;
-}
-
 # Converts a list of raw text strings into a list of
 # numerical feature vectors (dense arrays), suitable for Neural Networks training.
 sub _text_to_features {
@@ -411,6 +397,17 @@ sub _text_to_features {
       my ($text) = @_;
       return () unless defined $text;
       $text = lc $text;
+      # Strip subject prefixes, enhances results
+      $text =~ s/^(?:[a-z]{2,12}:\s*){1,10}//i;
+
+      # Strip anything that looks like url or email, enhances results
+      $text =~ s/https?(?:\:\/\/|:&#x2F;&#x2F;|%3A%2F%2F)\S{1,1024}/ /gs;
+      $text =~ s/\S{1,64}?\@[a-zA-Z]\S{1,128}/ /gs;
+      $text =~ s/\bwww\.\S{1,128}/ /gs;
+      # Remove extra chars
+      $text =~ s/\-{2,}//g;
+      # Remove tokens that could be a date
+      $text =~ s/\b\d+(?:\-|\/)\d+(?:\-|\/)\d+\b//g;
       # replace HTML entities and punctuation with spaces
       $text =~ s/&[a-z#0-9]+;/ /g;
       $text =~ s{[^\p{L}\p{N}\-]}{ }g;
@@ -576,7 +573,8 @@ sub learn_message {
   }
 
   if(defined $msg) {
-    my $text = _get_first_visible_text($msg);
+    my $text =  $msg->get_visible_rendered_body_text_array();
+    $text = join("\n", @{$text});
     if (!defined $text || length($text) < $min_text_len) {
       dbg("Not enough text, skipping neural network processing");
       return;
@@ -732,10 +730,11 @@ sub _check_neuralnetwork {
   my $spam_threshold = $conf->{neuralnetwork_spam_threshold};
   my $ham_threshold  = $conf->{neuralnetwork_ham_threshold};
 
-  my $email_to_predict = _get_first_visible_text($msg);
+  my $email_to_predict = $msg->get_visible_rendered_body_text_array();
+  $email_to_predict = join("\n", @{$email_to_predict});
   if(!defined $email_to_predict || length($email_to_predict) < $min_text_len) {
     $pms->{neuralnetwork_prediction} = undef;
-    dbg("Too short email text");
+    dbg("Too short email text $email_to_predict");
     return;
   }
 
