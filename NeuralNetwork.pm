@@ -92,11 +92,11 @@ Maximum token length considered when building the vocabulary and feature vectors
 
 Maximum number of vocabulary terms to retain; least-frequent terms are pruned when exceeded.
 
-=item neuralnetwork_min_spam_count n (default: 24)
+=item neuralnetwork_min_spam_count n (default: 100)
 
 Minimum number of spam messages in the vocabulary required to enable prediction.
 
-=item neuralnetwork_min_ham_count n (default: 24)
+=item neuralnetwork_min_ham_count n (default: 100)
 
 Minimum number of ham messages in the vocabulary required to enable prediction.
 
@@ -202,13 +202,13 @@ SQLite.
   push(@cmds, {
     setting => 'neuralnetwork_min_spam_count',
     is_admin => 1,
-    default => 24,
+    default => 100,
     type => $Mail::SpamAssassin::Conf::CONF_TYPE_NUMERIC,
   });
   push(@cmds, {
     setting => 'neuralnetwork_min_ham_count',
     is_admin => 1,
-    default => 24,
+    default => 100,
     type => $Mail::SpamAssassin::Conf::CONF_TYPE_NUMERIC,
   });
   push(@cmds, {
