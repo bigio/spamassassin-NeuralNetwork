@@ -58,7 +58,7 @@
 .\" ========================================================================
 .\"
 .IX Title "NeuralNetwork 3"
-.TH NeuralNetwork 3 2026-02-24 "perl v5.42.0" "User Contributed Perl Documentation"
+.TH NeuralNetwork 3 2026-02-25 "perl v5.42.0" "User Contributed Perl Documentation"
 .\" For nroff, turn off justification.  Always turn off hyphenation; it makes
 .\" way too many mistakes in technical documents.
 .if n .ad l
@@ -88,6 +88,10 @@ Maximum token length considered when building the vocabulary and feature vectors
 .IP "neuralnetwork_vocab_cap n (default: 10000)" 4
 .IX Item "neuralnetwork_vocab_cap n (default: 10000)"
 Maximum number of vocabulary terms to retain; least\-frequent terms are pruned when exceeded.
+.IP "neuralnetwork_cache_ttl n (default: 300)" 4
+.IX Item "neuralnetwork_cache_ttl n (default: 300)"
+Time\-to\-live in seconds for the in\-memory vocabulary and model caches
+Set to 0 to disable caching.
 .IP "neuralnetwork_min_spam_count n (default: 100)" 4
 .IX Item "neuralnetwork_min_spam_count n (default: 100)"
 Minimum number of spam messages in the vocabulary required to enable prediction.
