@@ -1,3 +1,7 @@
+# Note for users upgrading to version 0.3
+- the model files `fann-user.model` must be removed after the upgrade in order
+  to correctly retrain the model
+
 # Note for users upgrading from version 0.1
 - the `id` field is no more used and should be removed from SQL tables    
   ex.:    
