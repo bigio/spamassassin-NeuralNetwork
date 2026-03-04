@@ -58,7 +58,7 @@
 .\" ========================================================================
 .\"
 .IX Title "NeuralNetwork 3"
-.TH NeuralNetwork 3 2026-02-26 "perl v5.42.0" "User Contributed Perl Documentation"
+.TH NeuralNetwork 3 2026-03-04 "perl v5.42.0" "User Contributed Perl Documentation"
 .\" For nroff, turn off justification.  Always turn off hyphenation; it makes
 .\" way too many mistakes in technical documents.
 .if n .ad l
@@ -131,7 +131,7 @@ When SpamAssassin declares a message a clear spam or ham during the message
 scan, and launches the auto\-learn process, message is autolearned as spam/ham
 in the same way as during the manual learning.
 Value 0 at this option disables the auto\-learn process for this plugin.
-.IP "neuralnetwork_dsn		(default: none)" 4
+.IP "neuralnetwork_dsn                (default: none)" 4
 .IX Item "neuralnetwork_dsn (default: none)"
 The DBI dsn of the database to use.
 .Sp
@@ -160,3 +160,7 @@ SQLite.
 .IX Item "neuralnetwork_password (default: none)"
 The password that should be used to connect to the database.  Not used for
 SQLite.
+.IP "neuralnetwork_min_vocab_hits n (default: 10)" 4
+.IX Item "neuralnetwork_min_vocab_hits n (default: 10)"
+Minimum number of tokens in the email that must exist in the vocabulary for
+prediction to run.
