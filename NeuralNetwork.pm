@@ -44,7 +44,7 @@ use strict;
 use warnings;
 use re 'taint';
 
-my $VERSION = 0.3;
+my $VERSION = 0.4;
 
 use AI::FANN qw(:all);
 use Storable qw(store retrieve);
@@ -364,7 +364,7 @@ sub finish_parsing_end {
 # Converts a list of raw text strings into a list of
 # numerical feature vectors (dense arrays), suitable for Neural Networks training.
 sub _text_to_features {
-    my ($self, $conf, $nn_data_dir, $train, $label, @emails) = @_;
+    my ($self, $conf, $nn_data_dir, $train, $label, $target_vocab_ref, @emails) = @_;
 
     my $min_word_len = $conf->{neuralnetwork_min_word_len};
     my $max_word_len = $conf->{neuralnetwork_max_word_len};
@@ -501,11 +501,13 @@ sub _text_to_features {
       }
     }
 
-    # Build vocabulary index (stable sorted order)
-    my @vocab_keys = sort keys %{ $vocabulary{terms} };
+    # Build vocabulary index
+    my @vocab_keys = ($target_vocab_ref && @$target_vocab_ref)
+        ? @$target_vocab_ref
+        : sort keys %{ $vocabulary{terms} };
     my %vocab_index = map { $vocab_keys[$_] => $_ } 0..$#vocab_keys;
     my $vocab_size = scalar @vocab_keys;
-    return ([], 0) unless $vocab_size > 0;
+    return ([], 0, []) unless $vocab_size > 0;
 
     # Precompute IDF: log((N+1)/(df+1)) + 1 smoothing
     my $N = $vocabulary{_doc_count} || 1;
@@ -541,7 +543,7 @@ sub _text_to_features {
       push @feature_vectors, { vec => \@vec, hits => $hits };
     }
 
-    return \@feature_vectors, $vocab_size;
+    return \@feature_vectors, $vocab_size, \@vocab_keys;
 }
 
 sub learn_message {
@@ -615,7 +617,7 @@ sub learn_message {
   my $update_vocab = 1;
 
   # Convert email text to numerical feature vectors
-  my ($feature_vectors, $vocab_size) = _text_to_features($self, $self->{main}->{conf}, $nn_data_dir, $update_vocab, $isspam, @email_texts);
+  my ($feature_vectors, $vocab_size, $vocab_keys_ref) = _text_to_features($self, $self->{main}->{conf}, $nn_data_dir, $update_vocab, $isspam, undef, @email_texts);
 
   return unless $feature_vectors && @$feature_vectors;
 
@@ -658,10 +660,17 @@ sub learn_message {
     }
 
     if (defined $existing_network) {
-      # Vocabulary grew: preserve the trained model by adjusting the training vectors
+      # Vocabulary grew: rebuild training vectors using the model's original word -> index mapping
       my $model_size = $existing_network->num_inputs();
-      dbg("Vocabulary size changed ($num_input vs model $model_size), adjusting training vectors");
-      $feature_vectors = [ map { my $v = _adjust_vector_size($_->{vec}, $model_size); { vec => $v, hits => scalar grep { $_ != 0 } @$v } } @$feature_vectors ];
+      dbg("Vocabulary size changed ($num_input vs model $model_size), rebuilding training vectors with model vocabulary");
+      my $stored_vocab_ref = $self->_load_model_vocab($nn_data_dir);
+      if (defined $stored_vocab_ref && scalar(@$stored_vocab_ref) == $model_size) {
+        ($feature_vectors, undef) = _text_to_features($self, $self->{main}->{conf}, $nn_data_dir, 0, undef, $stored_vocab_ref, @email_texts);
+        $vocab_keys_ref = $stored_vocab_ref;
+      } else {
+        dbg("Model vocabulary file not found or mismatched, falling back to vector adjustment");
+        $feature_vectors = [ map { my $v = _adjust_vector_size($_->{vec}, $model_size); { vec => $v, hits => scalar grep { $_ != 0 } @$v } } @$feature_vectors ];
+      }
       $num_input = $model_size;
       $network = $existing_network;
     } else {
@@ -733,7 +742,12 @@ sub learn_message {
 
   # Save the model
   eval {
-    $network->save($dataset_path) or die "save failed";
+    $network->save($dataset_path) or die "model save failed";
+    if (defined $self->{main}->{conf}->{neuralnetwork_dsn} && $self->{dbh}) {
+      $self->_save_model_vocab_to_sql($vocab_keys_ref);
+    } else {
+      $self->_save_model_vocab($vocab_keys_ref, $nn_data_dir);
+    }
     1;
   } and do {
     dbg("Model saved to '$dataset_path' (input:$num_input)");
@@ -977,11 +991,22 @@ sub _check_neuralnetwork {
     return;
   }
 
+  my $dataset_path = File::Spec->catfile($nn_data_dir, 'fann-' . lc($self->{main}->{username}) . '.model');
+  if(not -f $dataset_path) {
+    $pms->{neuralnetwork_prediction} = undef;
+    dbg("Can't predict without a trained model, $dataset_path cannot be read");
+    return;
+  }
+
+  # Load the vocabulary the model was trained on so the feature vector dimensions
+  # are always aligned with the model, regardless of subsequent vocabulary growth.
+  my $stored_vocab_ref = $self->_load_model_vocab($nn_data_dir);
+
   # Do not update the vocabulary
   my $update_vocab = 0;
 
-  # Convert email to feature vector using the same vocabulary
-  my ($feature_vectors, $vocab_size) = _text_to_features($self, $conf, $nn_data_dir, $update_vocab, undef, $email_to_predict);
+  # Convert email to feature vector using the model's vocabulary
+  my ($feature_vectors, $vocab_size) = _text_to_features($self, $conf, $nn_data_dir, $update_vocab, undef, $stored_vocab_ref, $email_to_predict);
   unless ($feature_vectors && @$feature_vectors) {
     $pms->{neuralnetwork_prediction} = undef;
     dbg("Not enough tokens found");
@@ -996,13 +1021,6 @@ sub _check_neuralnetwork {
     return;
   }
   my $input_vector = $feature_vectors->[0]{vec};
-
-  my $dataset_path = File::Spec->catfile($nn_data_dir, 'fann-' . lc($self->{main}->{username}) . '.model');
-  if(not -f $dataset_path) {
-    $pms->{neuralnetwork_prediction} = undef;
-    dbg("Can't predict without a trained model, $dataset_path cannot be read");
-    return;
-  }
 
   my $ttl = $conf->{neuralnetwork_cache_ttl} || 0;
   my $model_age = defined $self->{_neural_model_load_time} ? time() - $self->{_neural_model_load_time} : undef;
@@ -1025,7 +1043,8 @@ sub _check_neuralnetwork {
 
   my $expected_size = $network->num_inputs();
   if (scalar(@$input_vector) != $expected_size) {
-    dbg("Vocabulary size changed (got ".scalar(@$input_vector).", model expects ".$expected_size."), adjusting input vector");
+    # Fallback for models created before vocab tracking was introduced
+    dbg("Input vector size mismatch (got ".scalar(@$input_vector).", model expects ".$expected_size."), adjusting");
     $input_vector = _adjust_vector_size($input_vector, $expected_size);
     unless (defined $input_vector && scalar(@$input_vector) == $expected_size) {
       $pms->{neuralnetwork_prediction} = undef;
@@ -1103,6 +1122,7 @@ sub _create_vocabulary_table {
           docs_count INTEGER NOT NULL DEFAULT 0,
           spam_count INTEGER NOT NULL DEFAULT 0,
           ham_count INTEGER NOT NULL DEFAULT 0,
+          model_position INTEGER DEFAULT NULL,
           UNIQUE (username, keyword)
         )
       ");
@@ -1337,6 +1357,85 @@ sub _load_vocabulary_from_sql {
   $self->{_vocab_cache}{$username} = \%vocabulary;
   $self->{_vocab_cache_time}{$username} = time();
   return \%vocabulary;
+}
+
+sub _save_model_vocab_to_sql {
+  my ($self, $vocab_keys_ref, $username) = @_;
+  return unless $self->{dbh} && defined $vocab_keys_ref;
+
+  $username ||= $self->{main}->{username};
+
+  eval {
+    $self->{dbh}->begin_work();
+    $self->{dbh}->do(
+      "UPDATE neural_vocabulary SET model_position = NULL WHERE username = ?",
+      undef, lc($username)
+    );
+    my $sth = $self->{dbh}->prepare(
+      "UPDATE neural_vocabulary SET model_position = ? WHERE username = ? AND keyword = ?"
+    );
+    for my $i (0 .. $#$vocab_keys_ref) {
+      $sth->execute($i, lc($username), $vocab_keys_ref->[$i]);
+    }
+    $self->{dbh}->commit();
+    dbg("Saved model vocabulary (" . scalar(@$vocab_keys_ref) . " terms) to SQL for user: $username");
+    1;
+  } or do {
+    eval { $self->{dbh}->rollback() };
+    dbg("Failed to save model vocabulary to SQL: " . ($@ || 'unknown'));
+  };
+}
+
+sub _load_model_vocab_from_sql {
+  my ($self, $username) = @_;
+  return undef unless $self->{dbh};
+
+  $username ||= $self->{main}->{username};
+
+  my $vocab_ref;
+  eval {
+    my $sth = $self->{dbh}->prepare(
+      "SELECT keyword FROM neural_vocabulary
+       WHERE username = ? AND model_position IS NOT NULL
+       ORDER BY model_position"
+    );
+    $sth->execute(lc($username));
+    my $rows = $sth->fetchall_arrayref();
+    $vocab_ref = [ map { $_->[0] } @$rows ] if @$rows;
+    1;
+  } or do {
+    dbg("Failed to load model vocabulary from SQL: " . ($@ || 'unknown'));
+  };
+  return $vocab_ref;
+}
+
+sub _save_model_vocab {
+  my ($self, $vocab_keys_ref, $nn_data_dir) = @_;
+  my $vocab_path = $self->_model_vocab_path($nn_data_dir);
+  eval {
+    store($vocab_keys_ref, $vocab_path) or die "store failed";
+    1;
+  } or do {
+    dbg("Failed to save model vocabulary to file: " . ($@ || 'unknown'));
+  };
+}
+
+sub _load_model_vocab {
+  my ($self, $nn_data_dir) = @_;
+  if (defined $self->{main}->{conf}->{neuralnetwork_dsn} && $self->{dbh}) {
+    return $self->_load_model_vocab_from_sql();
+  } else {
+    my $vocab_path = $self->_model_vocab_path($nn_data_dir);
+    return undef unless -f $vocab_path;
+    my $vocab_ref;
+    eval {
+      $vocab_ref = retrieve($vocab_path);
+      1;
+    } or do {
+      dbg("Failed to load model vocabulary from file: " . ($@ || 'unknown'));
+    };
+    return $vocab_ref;
+  }
 }
 
 1;

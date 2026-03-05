@@ -1,3 +1,10 @@
+# Note for users upgrading to version 0.4
+- a new `model_position` column has been added, after updating the database you need
+to remove the model files `fann-user.model` in order to correctly retrain the model.
+You can add the needed column with the SQL command:
+ALTER TABLE neural_vocabulary ADD COLUMN model_position INT DEFAULT NULL,
+  ADD KEY neural_vocab_model_pos_idx (username, model_position);
+
 # Note for users upgrading to version 0.3
 - the model files `fann-user.model` must be removed after the upgrade in order
   to correctly retrain the model
