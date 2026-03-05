@@ -48,6 +48,7 @@ my $VERSION = 0.4;
 
 use AI::FANN qw(:all);
 use Storable qw(store retrieve);
+use Fcntl qw(:flock);
 use File::Spec;
 
 use Mail::SpamAssassin;
@@ -630,19 +631,17 @@ sub learn_message {
   my $num_output_neurons = 1;
 
   # Reload model from disk if cache has expired
-  my $ttl = $self->{main}->{conf}->{neuralnetwork_cache_ttl} || 0;
-  my $model_age = defined $self->{_neural_model_load_time} ? time() - $self->{_neural_model_load_time} : undef;
-  if (defined $model_age && $ttl > 0 && $model_age >= $ttl && -f $dataset_path) {
-    dbg("Model cache expired (age: ${model_age}s, ttl: ${ttl}s), reloading before training");
-    eval {
-      $self->{neural_model} = AI::FANN->new_from_file($dataset_path);
-      $self->{_neural_model_load_time} = time();
-      1;
-    } or do {
-      dbg("Failed to reload model: " . ($@ || 'unknown'));
-      undef $self->{neural_model};
-    };
-  }
+  my $lock_path = $dataset_path . '.lock';
+  open(my $lock_fh, '>', $lock_path) or do {
+    info("Cannot open lock file '$lock_path': $!");
+    return;
+  };
+  flock($lock_fh, LOCK_EX) or do {
+    info("Cannot acquire lock on '$lock_path': $!");
+    close($lock_fh);
+    return;
+  };
+  undef $self->{neural_model};
 
   my $network;
   if(defined $self->{neural_model} && $self->{neural_model}->num_inputs() == $num_input) {
@@ -763,6 +762,7 @@ sub learn_message {
   } or do {
     info("Cannot save model to '$dataset_path' (" . ($@ || 'unknown') . ")");
   };
+  close($lock_fh);
   return;
 }
 
@@ -1407,6 +1407,11 @@ sub _load_model_vocab_from_sql {
     dbg("Failed to load model vocabulary from SQL: " . ($@ || 'unknown'));
   };
   return $vocab_ref;
+}
+
+sub _model_vocab_path {
+  my ($self, $nn_data_dir) = @_;
+  return File::Spec->catfile($nn_data_dir, 'model-vocab-' . lc($self->{main}->{username}) . '.data');
 }
 
 sub _save_model_vocab {
