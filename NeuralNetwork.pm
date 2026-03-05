@@ -350,6 +350,7 @@ sub finish_parsing_end {
   }
 
   my $dataset_path = File::Spec->catfile($nn_data_dir, 'fann-' . lc($self->{main}->{username}) . '.model');
+  $dataset_path = Mail::SpamAssassin::Util::untaint_file_path($dataset_path);
   if (-f $dataset_path) {
     eval {
       $self->{neural_model} = AI::FANN->new_from_file($dataset_path);
@@ -632,6 +633,7 @@ sub learn_message {
 
   # Reload model from disk if cache has expired
   my $lock_path = $dataset_path . '.lock';
+  $lock_path = Mail::SpamAssassin::Util::untaint_file_path($lock_path);
   open(my $lock_fh, '>', $lock_path) or do {
     info("Cannot open lock file '$lock_path': $!");
     return;
@@ -641,7 +643,6 @@ sub learn_message {
     close($lock_fh);
     return;
   };
-  undef $self->{neural_model};
 
   my $network;
   if(defined $self->{neural_model} && $self->{neural_model}->num_inputs() == $num_input) {
