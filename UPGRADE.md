@@ -1,3 +1,7 @@
+# Note for users upgrading to every version
+- After each upgrade is better to remove the model files, they will be recreated
+on next `sa-learn(1)` run.
+
 # Note for users upgrading to version 0.4
 - a new `model_position` column has been added, after updating the database you need
 to remove the model files `fann-user.model` in order to correctly retrain the model.
