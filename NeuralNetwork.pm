@@ -720,7 +720,7 @@ sub learn_message {
     $class_weight = $spam_docs / $ham_docs;   # < 1 when ham dominates
   }
   $class_weight = 0.5 if $class_weight < 0.5;
-  $class_weight = 5.0 if $class_weight > 5.0;
+  $class_weight = 2.0 if $class_weight > 2.0;
 
   my $weighted_epochs = int($train_epochs * $class_weight) || 1;
   dbg("Incremental training: weighted_epochs=$weighted_epochs " .
@@ -732,6 +732,18 @@ sub learn_message {
       my $input  = $feature_vectors->[$i]{vec};
       my $output = [$labels[$i] ? 1 : 0];
       eval { $network->train($input, $output); 1 } or dbg("Training step failed: " . ($@ || 'unknown'));
+    }
+  }
+
+  # Train once on vocabulary-derived representative spam/ham
+  # vectors.
+  if (keys %{$vocab_for_balance{terms} || {}} && defined $vocab_keys_ref) {
+    my ($svec, $hvec) = _build_class_tfidf_vectors(\%vocab_for_balance, $vocab_keys_ref);
+    if ($svec) {
+      eval { $network->train($svec, [1]); 1 } or dbg("Replay spam step failed: " . ($@ || 'unknown'));
+      eval { $network->train($hvec, [0]); 1 } or dbg("Replay ham step failed: " . ($@ || 'unknown'));
+      dbg("Replay: spam_docs=" . ($vocab_for_balance{_spam_count} || 1) .
+          ", ham_docs=" . ($vocab_for_balance{_ham_count} || 1));
     }
   }
 
@@ -865,6 +877,33 @@ sub _adjust_vector_size {
   return \@v;
 }
 
+# Build L2-normalised TF-IDF spam and ham vectors from a vocabulary hash.
+sub _build_class_tfidf_vectors {
+  my ($vocabulary, $vocab_keys) = @_;
+  return () unless ref($vocabulary) eq 'HASH' && ref($vocab_keys) eq 'ARRAY' && @$vocab_keys;
+
+  my $terms     = $vocabulary->{terms} || {};
+  my $N         = $vocabulary->{_doc_count}  || 1;
+  my $spam_docs = $vocabulary->{_spam_count} || 1;
+  my $ham_docs  = $vocabulary->{_ham_count}  || 1;
+
+  my (@spam_vec, @ham_vec);
+  for my $i (0 .. $#$vocab_keys) {
+    my $w   = $vocab_keys->[$i];
+    my $td  = $terms->{$w} // {};
+    my $idf = log(($N + 1) / (($td->{docs} || 0) + 1)) + 1;
+    $spam_vec[$i] = (($td->{spam} || 0) / $spam_docs) * $idf;
+    $ham_vec[$i]  = (($td->{ham}  || 0) / $ham_docs)  * $idf;
+  }
+
+  for my $vec (\@spam_vec, \@ham_vec) {
+    my $norm = sqrt(do { my $s = 0; $s += $_ * $_ for @$vec; $s }) || 1;
+    @$vec = map { $_ / $norm } @$vec;
+  }
+
+  return (\@spam_vec, \@ham_vec);
+}
+
 # Create a baseline model from vocabulary statistics when vocab size has changed.
 sub _retrain_from_vocabulary {
   my ($self, $conf, $nn_data_dir, $vocab_size) = @_;
@@ -902,32 +941,12 @@ sub _retrain_from_vocabulary {
   my $actual_size = scalar @vocab_keys;
   return unless $actual_size == $vocab_size;
 
-  # Build synthetic spam and ham TF-IDF vectors normalised by class
-  # document count.
-  my $N         = $vocabulary{_doc_count} || 1;
   my $spam_docs = $vocabulary{_spam_count} || 1;
   my $ham_docs  = $vocabulary{_ham_count}  || 1;
 
-  my (@spam_vec, @ham_vec);
-  for my $i (0 .. $#vocab_keys) {
-    my $w  = $vocab_keys[$i];
-    my $td = $terms->{$w};
-    my $df         = $td->{docs}  || 0;
-    my $spam_freq  = $td->{spam}  || 0;
-    my $ham_freq   = $td->{ham}   || 0;
-    my $idf        = log(($N + 1) / ($df + 1)) + 1;
-
-    $spam_vec[$i] = ($spam_freq / $spam_docs) * $idf;
-    $ham_vec[$i]  = ($ham_freq  / $ham_docs)  * $idf;
-  }
-
-  # L2-normalize both vectors
-  for my $vec (\@spam_vec, \@ham_vec) {
-    my $norm = 0;
-    $norm += $_ * $_ for @$vec;
-    $norm = sqrt($norm) || 1;
-    @$vec = map { $_ / $norm } @$vec;
-  }
+  my ($spam_vec_ref, $ham_vec_ref) = _build_class_tfidf_vectors(\%vocabulary, \@vocab_keys);
+  return unless $spam_vec_ref;
+  my (@spam_vec, @ham_vec) = (@$spam_vec_ref, @$ham_vec_ref);
 
   my $spam_reps = 1;
   my $ham_reps  = 1;
