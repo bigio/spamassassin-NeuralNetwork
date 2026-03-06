@@ -697,6 +697,7 @@ sub learn_message {
   }
   if (!keys %{$vocab_for_balance{terms} || {}}) {
     my $vocab_path = File::Spec->catfile($nn_data_dir, 'vocabulary-' . lc($self->{main}->{username}) . '.data');
+    $vocab_path = Mail::SpamAssassin::Util::untaint_file_path($vocab_path);
     if (-f $vocab_path) {
       eval {
         my $ref = retrieve($vocab_path);
@@ -1418,6 +1419,7 @@ sub _model_vocab_path {
 sub _save_model_vocab {
   my ($self, $vocab_keys_ref, $nn_data_dir) = @_;
   my $vocab_path = $self->_model_vocab_path($nn_data_dir);
+  $vocab_path = Mail::SpamAssassin::Util::untaint_file_path($vocab_path);
   eval {
     store($vocab_keys_ref, $vocab_path) or die "store failed";
     1;
@@ -1432,6 +1434,7 @@ sub _load_model_vocab {
     return $self->_load_model_vocab_from_sql();
   } else {
     my $vocab_path = $self->_model_vocab_path($nn_data_dir);
+    $vocab_path = Mail::SpamAssassin::Util::untaint_file_path($vocab_path);
     return undef unless -f $vocab_path;
     my $vocab_ref;
     eval {
