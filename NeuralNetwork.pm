@@ -1279,6 +1279,7 @@ sub _save_vocabulary_to_sql {
     my $sth_upsert = $self->{dbh}->prepare($upsert_sql);
     my $count = 0;
 
+    $self->{dbh}->begin_work();
     foreach my $keyword (keys %{$terms}) {
       my $term_data = $terms->{$keyword};
       $sth_upsert->execute(
@@ -1291,6 +1292,7 @@ sub _save_vocabulary_to_sql {
       );
       $count++;
     }
+    $self->{dbh}->commit();
 
     dbg("Saved $count vocabulary terms to SQL for user: $username");
 
@@ -1301,6 +1303,7 @@ sub _save_vocabulary_to_sql {
     }
     1;
   } or do {
+    eval { $self->{dbh}->rollback() };
     my $err = $@ || 'unknown';
     dbg("Failed to save vocabulary to SQL: $err");
   };
