@@ -44,7 +44,7 @@ use strict;
 use warnings;
 use re 'taint';
 
-my $VERSION = 0.6;
+my $VERSION = 0.6.1;
 
 use AI::FANN qw(:all);
 use Storable qw(store retrieve);
@@ -68,10 +68,19 @@ sub _flock {
     return;
   }
   $lock_path = Mail::SpamAssassin::Util::untaint_file_path($lock_path);
-  open(my $fh, '>>', $lock_path) or do {
-    dbg("Cannot open lock file '$lock_path': $!");
-    return undef;
-  };
+
+  # Cache the open file handle for this lock path.
+  if (!defined $self->{_lock_fh}{$lock_path} ||
+      !defined fileno($self->{_lock_fh}{$lock_path})) {
+    my $fh;
+    open($fh, '>>', $lock_path) or do {
+      dbg("Cannot open lock file '$lock_path': $!");
+      return undef;
+    };
+    $self->{_lock_fh}{$lock_path} = $fh;
+  }
+  my $fh = $self->{_lock_fh}{$lock_path};
+
   my $locked = 0;
   if ($timeout) {
     my $deadline = time() + $timeout;
@@ -84,7 +93,6 @@ sub _flock {
   }
   unless ($locked) {
     dbg("Cannot acquire lock on '$lock_path' after ${timeout}s, proceeding unlocked");
-    close($fh);
     return undef;
   }
   return $fh;
@@ -403,7 +411,7 @@ sub finish_parsing_end {
       my $err = $@ || 'unknown';
       info("Failed to load neural model from $dataset_path: $err");
     };
-    close($lock_fh) if $lock_fh;
+    flock($lock_fh, LOCK_UN) if $lock_fh;
   }
 }
 
@@ -439,17 +447,41 @@ sub _text_to_features {
 
     # If not loaded from SQL, try loading from file
     if (!keys %{$vocabulary{terms} || {}}) {
-      my $vocab_path = File::Spec->catfile($nn_data_dir, 'vocabulary-' . lc($self->{main}->{username}) . '.data');
-      if(-f $vocab_path) {
-        eval {
-          my $ref = retrieve($vocab_path);
-          if (ref $ref eq 'HASH') {
-            %vocabulary = %{$ref};
-          }
-          1;
-        } or do {
-          warn("Failed to retrieve vocabulary from $vocab_path: " . ($@ || 'unknown'));
-        };
+      my $username = lc($self->{main}->{username});
+      my $ttl = $conf->{neuralnetwork_cache_ttl} || 0;
+
+      # Check file-based vocabulary cache
+      if (!$train && $ttl > 0 && defined $self->{_file_vocab_cache}{$username}) {
+        my $age = time() - ($self->{_file_vocab_cache_time}{$username} || 0);
+        if ($age < $ttl) {
+          dbg("Using cached file vocabulary for user: $username (age: ${age}s, ttl: ${ttl}s)");
+          %vocabulary = %{$self->{_file_vocab_cache}{$username}};
+        } else {
+          dbg("File vocabulary cache expired for user: $username (age: ${age}s, ttl: ${ttl}s)");
+          delete $self->{_file_vocab_cache}{$username};
+          delete $self->{_file_vocab_cache_time}{$username};
+        }
+      }
+
+      # Load from file if not cached
+      if (!keys %{$vocabulary{terms} || {}}) {
+        my $vocab_path = File::Spec->catfile($nn_data_dir, 'vocabulary-' . $username . '.data');
+        if(-f $vocab_path) {
+          eval {
+            my $ref = retrieve($vocab_path);
+            if (ref $ref eq 'HASH') {
+              %vocabulary = %{$ref};
+            }
+            1;
+          } or do {
+            warn("Failed to retrieve vocabulary from $vocab_path: " . ($@ || 'unknown'));
+          };
+        }
+        # Populate cache after successful load
+        if (!$train && $ttl > 0 && keys %{$vocabulary{terms} || {}}) {
+          $self->{_file_vocab_cache}{$username} = \%vocabulary;
+          $self->{_file_vocab_cache_time}{$username} = time();
+        }
       }
     }
 
@@ -544,6 +576,13 @@ sub _text_to_features {
         } or do {
           warn("Failed to store vocabulary to $vocab_path: " . ($@ || 'unknown'));
         };
+        # Keep file-based cache in sync with the freshly saved vocabulary
+        my $ttl = $conf->{neuralnetwork_cache_ttl} || 0;
+        if ($ttl > 0) {
+          my $username = lc($self->{main}->{username});
+          $self->{_file_vocab_cache}{$username} = \%vocabulary;
+          $self->{_file_vocab_cache_time}{$username} = time();
+        }
       }
       # learn_message cache
       $self->{_last_train_vocab} = \%vocabulary if $self;
@@ -671,7 +710,7 @@ sub learn_message {
     } or do {
       dbg("Failed to load model before training: " . ($@ || 'unknown'));
     };
-    close($rlock_fh) if $rlock_fh;
+    flock($rlock_fh, LOCK_UN) if $rlock_fh;
   } elsif (!-f $dataset_path) {
     undef $self->{neural_model};
   }
@@ -715,7 +754,7 @@ sub learn_message {
       } or do {
         dbg("Failed to load existing model for size check: " . ($@ || 'unknown'));
       };
-      close($rlock_fh) if $rlock_fh;
+      flock($rlock_fh, LOCK_UN) if $rlock_fh;
     }
 
     if (defined $existing_network) {
@@ -829,7 +868,7 @@ sub learn_message {
   } or do {
     info("Cannot save model to '$dataset_path' (" . ($@ || 'unknown') . ")");
   };
-  close($lock_fh);
+  flock($lock_fh, LOCK_UN);
 
   if ($model_saved) {
     dbg("Model saved to '$dataset_path' (input:$num_input)");
@@ -1141,10 +1180,10 @@ sub _check_neuralnetwork {
       1;
     } or do {
       dbg("Failed to load model for prediction: " . ($@ || 'unknown'));
-      close($rlock_fh) if $rlock_fh;
+      flock($rlock_fh, LOCK_UN) if $rlock_fh;
       return;
     };
-    close($rlock_fh) if $rlock_fh;
+    flock($rlock_fh, LOCK_UN) if $rlock_fh;
   }
   my $network = $self->{neural_model};
 
@@ -1311,6 +1350,7 @@ sub _is_msgid_in_neural_seen {
     return;
   }
 
+  my $found = 0;
   eval {
     my $username = lc($self->{main}->{username}) || 'default';
 
@@ -1321,17 +1361,14 @@ sub _is_msgid_in_neural_seen {
     $sth->execute($username, $msgid);
     my $rows = $sth->fetchall_arrayref();
 
-    if(scalar @$rows > 0) {
-      # Message $msgid found
-      return 1;
-    }
+    $found = 1 if scalar @$rows > 0;
+    1;
   } or do {
     if($@) {
       dbg("Failed to find message ID on neural_seen: $@");
-    } else {
-      return 0;
     }
   };
+  return $found;
 }
 
 sub _save_vocabulary_to_sql {
