@@ -1445,8 +1445,8 @@ sub _save_vocabulary_to_sql {
     }
     1;
   } or do {
-    eval { $self->{dbh}->rollback() };
     my $err = $@ || 'unknown';
+    eval { $self->{dbh}->rollback() if !$self->{dbh}{AutoCommit} };
     dbg("Failed to save vocabulary to SQL: $err");
   };
 }
@@ -1560,8 +1560,9 @@ sub _save_model_vocab_to_sql {
     dbg("Saved model vocabulary (" . scalar(@$vocab_keys_ref) . " terms) to SQL for user: $username");
     1;
   } or do {
-    eval { $self->{dbh}->rollback() };
-    dbg("Failed to save model vocabulary to SQL: " . ($@ || 'unknown'));
+    my $err = $@ || 'unknown';
+    eval { $self->{dbh}->rollback() if !$self->{dbh}{AutoCommit} };
+    dbg("Failed to save model vocabulary to SQL: $err");
   };
 }
 
