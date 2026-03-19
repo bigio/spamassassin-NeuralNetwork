@@ -69,6 +69,17 @@ sub _flock {
   }
   $lock_path = Mail::SpamAssassin::Util::untaint_file_path($lock_path);
 
+  # Close idle cached lock file handles every 300s
+  my $now = time();
+  for my $path (keys %{$self->{_lock_fh} // {}}) {
+    my $last = $self->{_lock_fh_time}{$path} // 0;
+    if ($now - $last >= 300) {
+      close(delete $self->{_lock_fh}{$path});
+      delete $self->{_lock_fh_time}{$path};
+      dbg("Closed idle lock fd for '$path'");
+    }
+  }
+
   # Cache the open file handle for this lock path.
   if (!defined $self->{_lock_fh}{$lock_path} ||
       !defined fileno($self->{_lock_fh}{$lock_path})) {
@@ -80,6 +91,7 @@ sub _flock {
     $self->{_lock_fh}{$lock_path} = $fh;
   }
   my $fh = $self->{_lock_fh}{$lock_path};
+  $self->{_lock_fh_time}{$lock_path} = $now;
 
   my $locked = 0;
   if ($timeout) {
