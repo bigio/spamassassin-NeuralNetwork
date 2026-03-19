@@ -110,6 +110,18 @@ sub _flock {
   return $fh;
 }
 
+sub DESTROY {
+  my ($self) = @_;
+  for my $path (keys %{$self->{_lock_fh}}) {
+    close(delete $self->{_lock_fh}{$path});
+  }
+  delete $self->{_lock_fh_time};
+  if ($self->{dbh}) {
+    $self->{dbh}->disconnect();
+    undef $self->{dbh};
+  }
+}
+
 sub new {
   my ($class, $mailsa) = @_;
 
