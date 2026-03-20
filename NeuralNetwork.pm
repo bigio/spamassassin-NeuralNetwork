@@ -112,10 +112,12 @@ sub _flock {
 
 sub DESTROY {
   my ($self) = @_;
-  for my $path (keys %{$self->{_lock_fh}}) {
-    close(delete $self->{_lock_fh}{$path});
+  if(defined $self->{_lock_fh}) {
+    for my $path (keys %{$self->{_lock_fh}}) {
+      close(delete $self->{_lock_fh}{$path});
+    }
   }
-  delete $self->{_lock_fh_time};
+  delete $self->{_lock_fh_time} if defined $self->{_lock_fh_time};
   if ($self->{dbh}) {
     $self->{dbh}->disconnect();
     undef $self->{dbh};
