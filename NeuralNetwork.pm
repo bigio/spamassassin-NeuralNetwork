@@ -474,26 +474,7 @@ sub _text_to_features {
     # tokenize helper
     my $tokenize = sub {
       my ($text) = @_;
-      return () unless defined $text;
-      $text = lc $text;
-      # Strip subject prefixes, enhances results
-      $text =~ s/^(?:[a-z]{2,12}:\s*){1,10}//i;
-
-      # Strip anything that looks like url or email, enhances results
-      $text =~ s/https?(?:\:\/\/|:&#x2F;&#x2F;|%3A%2F%2F)\S{1,1024}/ /gs;
-      $text =~ s/\S{1,64}?\@[a-zA-Z]\S{1,128}/ /gs;
-      $text =~ s/\bwww\.\S{1,128}/ /gs;
-      # Remove extra chars
-      $text =~ s/\-{2,}//g;
-      # Remove tokens that could be a date
-      $text =~ s/\b\d+(?:\-|\/)\d+(?:\-|\/)\d+\b//g;
-      # replace HTML entities and punctuation with spaces
-      $text =~ s/&[a-z#0-9]+;/ /g;
-      $text =~ s{[^\p{L}\p{N}\-]}{ }g;
-      my @tokens = grep { length($_) >= $min_word_len && length($_) <= $max_word_len } split /\s+/, $text;
-      @tokens = grep { $_ !~ /^\d+$/ } @tokens;         # drop pure numbers
-      @tokens = grep { !$stopwords_ref->{$_} } @tokens;     # drop stopwords
-      return @tokens;
+      return $self->_tokenize_text($conf, $text);
     };
 
     # When training, build per-document term sets to update doc counts
@@ -868,25 +849,95 @@ sub forget_message {
   my $msgid = $msg->get_msgid();
   $msgid //= $msg->generate_msgid();
 
-  if($self->_is_msgid_in_neural_seen($msgid)) {
-    dbg("Message $msgid found in neural_seen, forgetting");
+  my $flag = $self->_is_msgid_in_neural_seen($msgid);
+  if ($flag) {
+    dbg("Message $msgid found in neural_seen (flag=$flag), forgetting");
     $self->{forgetting} = 1;
-    my $del_sql;
 
-    if ($self->{main}->{conf}->{neuralnetwork_dsn} =~ /^dbi:/i) {
-      $del_sql = "
-        DELETE FROM neural_seen
-        WHERE username = ? AND msgid = ?
-      ";
-    } else {
+    unless ($self->{main}->{conf}->{neuralnetwork_dsn} =~ /^dbi:/i) {
       dbg("It's not possible to forget a message if neuralnetwork_dsn has not been configured");
       return;
     }
+
+    # Decrement vocabulary counts for tokens in this message
+    my $text = $msg->get_visible_rendered_body_text_array();
+    $text = join("\n", @{$text}) if defined $text;
+
+    if (defined $text && length($text) > 0) {
+      my @tokens = $self->_tokenize_text($conf, $text);
+      if (@tokens) {
+        my %token_total;
+        foreach my $t (@tokens) {
+          $token_total{$t}++;
+        }
+
+        my $is_spam = ($flag eq 'S') ? 1 : 0;
+        eval {
+          $self->{dbh}->begin_work();
+
+          my $update_sql = "
+            UPDATE neural_vocabulary
+            SET total_count = CASE WHEN total_count > ? THEN total_count - ? ELSE 0 END,
+                docs_count  = CASE WHEN docs_count > 0 THEN docs_count - 1 ELSE 0 END,
+                spam_count  = CASE WHEN spam_count > ? THEN spam_count - ? ELSE 0 END,
+                ham_count   = CASE WHEN ham_count > ? THEN ham_count - ? ELSE 0 END
+            WHERE username = ? AND keyword = ?
+          ";
+          my $sth_update = $self->{dbh}->prepare($update_sql);
+
+          foreach my $t (keys %token_total) {
+            my $spam_dec = $is_spam ? 1 : 0;
+            my $ham_dec  = $is_spam ? 0 : 1;
+            $sth_update->execute(
+              $token_total{$t}, $token_total{$t},  # total_count
+              $spam_dec, $spam_dec,                  # spam_count
+              $ham_dec, $ham_dec,                     # ham_count
+              lc($username), $t
+            );
+          }
+
+          # Remove unused terms
+          my $cleanup_sql = "
+            DELETE FROM neural_vocabulary
+            WHERE username = ?
+              AND total_count = 0 AND docs_count = 0
+              AND spam_count = 0 AND ham_count = 0
+          ";
+          my $sth_cleanup = $self->{dbh}->prepare($cleanup_sql);
+          $sth_cleanup->execute(lc($username));
+
+          $self->{dbh}->commit();
+          dbg("Decremented vocabulary counts for message $msgid");
+          1;
+        } or do {
+          my $err = $@ || 'unknown';
+          eval { $self->{dbh}->rollback() if !$self->{dbh}{AutoCommit} };
+          dbg("Failed to decrement vocabulary during forget: $err");
+        };
+      }
+    }
+
+    my $del_sql = "
+      DELETE FROM neural_seen
+      WHERE username = ? AND msgid = ?
+    ";
     my $sth = $self->{dbh}->prepare($del_sql);
-    if(not $sth->execute($username, $msgid)) {
+    if (not $sth->execute($username, $msgid)) {
       info("Error forgetting message $msgid");
       return 0;
     }
+
+    # Invalidate vocabulary cache
+    my $lc_user = lc($username);
+    if (defined $self->{_vocab_cache}) {
+      delete $self->{_vocab_cache}{$lc_user};
+      delete $self->{_vocab_cache_time}{$lc_user};
+    }
+    if (defined $self->{_file_vocab_cache}) {
+      delete $self->{_file_vocab_cache}{$lc_user};
+      delete $self->{_file_vocab_cache_time}{$lc_user};
+    }
+
     $self->{forgetting} = undef;
     return 1;
   }
@@ -1326,7 +1377,7 @@ sub _is_msgid_in_neural_seen {
     return;
   }
 
-  my $found = 0;
+  my $type;
   eval {
     my $username = lc($self->{main}->{username}) || 'default';
 
@@ -1335,16 +1386,16 @@ sub _is_msgid_in_neural_seen {
       ";
     my $sth = $self->{dbh}->prepare($select_sql);
     $sth->execute($username, $msgid);
-    my $rows = $sth->fetchall_arrayref();
+    my $row = $sth->fetchrow_arrayref();
 
-    $found = 1 if scalar @$rows > 0;
+    $type = $row->[0] if $row;
     1;
   } or do {
     if($@) {
       dbg("Failed to find message ID on neural_seen: $@");
     }
   };
-  return $found;
+  return $type;
 }
 
 sub _save_vocabulary_to_sql {
@@ -1413,6 +1464,34 @@ sub _save_vocabulary_to_sql {
     eval { $self->{dbh}->rollback() if !$self->{dbh}{AutoCommit} };
     dbg("Failed to save vocabulary to SQL: $err");
   };
+}
+
+sub _tokenize_text {
+  my ($self, $conf, $text) = @_;
+  return () unless defined $text;
+
+  my $min_word_len = $conf->{neuralnetwork_min_word_len};
+  my $max_word_len = $conf->{neuralnetwork_max_word_len};
+  my %stopwords = map { lc($_) => 1 } split /\s+/, $conf->{neuralnetwork_stopwords};
+
+  $text = lc $text;
+  # Strip subject prefixes, enhances results
+  $text =~ s/^(?:[a-z]{2,12}:\s*){1,10}//i;
+  # Strip anything that looks like url or email, enhances results
+  $text =~ s/https?(?:\:\/\/|:&#x2F;&#x2F;|%3A%2F%2F)\S{1,1024}/ /gs;
+  $text =~ s/\S{1,64}?\@[a-zA-Z]\S{1,128}/ /gs;
+  $text =~ s/\bwww\.\S{1,128}/ /gs;
+  # Remove extra chars
+  $text =~ s/\-{2,}//g;
+  # Remove tokens that could be a date
+  $text =~ s/\b\d+(?:\-|\/)\d+(?:\-|\/)\d+\b//g;
+  # replace HTML entities and punctuation with spaces
+  $text =~ s/&[a-z#0-9]+;/ /g;
+  $text =~ s{[^\p{L}\p{N}\-]}{ }g;
+  my @tokens = grep { length($_) >= $min_word_len && length($_) <= $max_word_len } split /\s+/, $text;
+  @tokens = grep { $_ !~ /^\d+$/ } @tokens;         # drop pure numbers
+  @tokens = grep { !$stopwords{$_} } @tokens;        # drop stopwords
+  return @tokens;
 }
 
 sub _load_vocabulary_from_sql {
