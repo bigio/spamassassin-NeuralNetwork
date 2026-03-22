@@ -44,7 +44,7 @@ use strict;
 use warnings;
 use re 'taint';
 
-my $VERSION = 0.7;
+my $VERSION = 0.7.1;
 
 use AI::FANN qw(:all);
 use Storable qw(store retrieve);
@@ -63,7 +63,11 @@ sub finish {
   my $self = shift;
 
   if ($self->{dbh}) {
-    $self->{dbh}->disconnect();
+    if (($self->{_dbh_pid} || 0) == $$) {
+      $self->{dbh}->disconnect();
+    } else {
+      $self->{dbh}->{InactiveDestroy} = 1;
+    }
     undef $self->{dbh};
   }
 }
@@ -605,6 +609,7 @@ sub learn_message {
   my $isspam = $params->{isspam};
   my $msg = $params->{msg};
   my $conf = $self->{main}->{conf};
+  $self->_init_sql_connection($conf) if defined $conf->{neuralnetwork_dsn};
   my $min_text_len = $conf->{neuralnetwork_min_text_len};
   my $learning_rate = $conf->{neuralnetwork_learning_rate};
   my $momentum = $conf->{neuralnetwork_momentum};
@@ -663,6 +668,12 @@ sub learn_message {
   my $dataset_path = File::Spec->catfile($nn_data_dir, 'fann-' . lc($self->{main}->{username}) . '.model');
   $dataset_path = Mail::SpamAssassin::Util::untaint_file_path($dataset_path);
 
+  my $locker = $self->{main}->{locker};
+  unless ($locker->safe_lock($dataset_path, $conf->{neuralnetwork_lock_timeout})) {
+    dbg("Cannot acquire lock on '$dataset_path', skipping learning");
+    return;
+  }
+
   # Extract the text and labels
   my @email_texts = map { $_->{text} } @training_data;
   my @labels = map { $_->{label} } @training_data;
@@ -693,12 +704,14 @@ sub learn_message {
   my ($feature_vectors, $vocab_size, $vocab_keys_ref) = _text_to_features($self, $self->{main}->{conf}, $nn_data_dir, $update_vocab, $isspam, undef, @email_texts);
 
   unless ($feature_vectors && @$feature_vectors) {
+    $locker->safe_unlock($dataset_path);
     return;
   }
 
   my $num_input = scalar(@{$feature_vectors->[0]{vec}});
   if ($num_input == 0) {
     dbg("No valid features found in message, skipping learning");
+    $locker->safe_unlock($dataset_path);
     return;
   }
   my $num_hidden_neurons = int(sqrt($num_input)) || 1;
@@ -815,12 +828,6 @@ sub learn_message {
     dbg("Prediction after learning: " . (defined $pred_after ? $pred_after : 'undef'));
   }
 
-  my $locker = $self->{main}->{locker};
-  unless ($locker->safe_lock($dataset_path, $conf->{neuralnetwork_lock_timeout})) {
-    dbg("Cannot acquire lock on '$dataset_path', proceeding without saving");
-    return;
-  }
-
   # Save the model
   my $model_saved = 0;
   eval {
@@ -853,6 +860,8 @@ sub learn_message {
 
 sub forget_message {
   my ($self, $params) = @_;
+  my $conf = $self->{main}->{conf};
+  $self->_init_sql_connection($conf) if defined $conf->{neuralnetwork_dsn};
 
   my $username = $self->{main}->{username};
   my $msg = $params->{msg};
@@ -1075,6 +1084,7 @@ sub _check_neuralnetwork {
   }
 
   my $conf = $self->{main}->{conf};
+  $self->_init_sql_connection($conf) if defined $conf->{neuralnetwork_dsn};
   my $min_text_len = $conf->{neuralnetwork_min_text_len};
   my $spam_threshold = $conf->{neuralnetwork_spam_threshold};
   my $ham_threshold  = $conf->{neuralnetwork_ham_threshold};
@@ -1186,6 +1196,13 @@ sub _check_neuralnetwork {
 
 sub _init_sql_connection {
   my ($self, $conf) = @_;
+
+  # Reconnect in each child process to prevent SQL protocol state corruption
+  if ($self->{dbh} && ($self->{_dbh_pid} || 0) != $$) {
+    $self->{dbh}->{InactiveDestroy} = 1;
+    undef $self->{dbh};
+  }
+
   return if $self->{dbh};
   return if !$conf->{neuralnetwork_dsn};
 
@@ -1202,8 +1219,9 @@ sub _init_sql_connection {
       $password,
       {RaiseError => 1, PrintError => 0, InactiveDestroy => 1, AutoCommit => 1}
     );
+    $self->{_dbh_pid} = $$;
     $self->_create_vocabulary_table();
-    dbg("SQL connection initialized for vocabulary storage");
+    dbg("SQL connection initialized for vocabulary storage (pid $$)");
     1;
   } or do {
     my $err = $@ || 'unknown';
