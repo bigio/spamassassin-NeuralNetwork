@@ -783,24 +783,28 @@ sub learn_message {
       "(base=$train_epochs, class_weight=$class_weight, " .
       "spam_docs=$spam_docs, ham_docs=$ham_docs, isspam=$isspam)");
 
+  # Build class-representative vectors for replay before training begins.
+  my ($svec, $hvec);
+  if (keys %{$vocab_for_balance{terms} || {}} && defined $vocab_keys_ref) {
+    ($svec, $hvec) = _build_class_tfidf_vectors(\%vocab_for_balance, $vocab_keys_ref);
+  }
+
   for my $e (1 .. $weighted_epochs) {
     for my $i (0 .. $#$feature_vectors) {
       my $input  = $feature_vectors->[$i]{vec};
       my $output = [$labels[$i] ? 1 : 0];
       eval { $network->train($input, $output); 1 } or dbg("Training step failed: " . ($@ || 'unknown'));
     }
-  }
-
-  # Train once on vocabulary-derived representative spam/ham
-  # vectors.
-  if (keys %{$vocab_for_balance{terms} || {}} && defined $vocab_keys_ref) {
-    my ($svec, $hvec) = _build_class_tfidf_vectors(\%vocab_for_balance, $vocab_keys_ref);
     if ($svec) {
       eval { $network->train($svec, [1]); 1 } or dbg("Replay spam step failed: " . ($@ || 'unknown'));
       eval { $network->train($hvec, [0]); 1 } or dbg("Replay ham step failed: " . ($@ || 'unknown'));
-      dbg("Replay: spam_docs=" . ($vocab_for_balance{_spam_count} || 1) .
-          ", ham_docs=" . ($vocab_for_balance{_ham_count} || 1));
     }
+  }
+
+  if ($svec) {
+    dbg("Replay: interleaved across $weighted_epochs epochs, " .
+        "spam_docs=" . ($vocab_for_balance{_spam_count} || 1) .
+        ", ham_docs=" . ($vocab_for_balance{_ham_count} || 1));
   }
 
   if (scalar(@$feature_vectors) == 1) {
