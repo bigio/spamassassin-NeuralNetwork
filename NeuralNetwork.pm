@@ -805,11 +805,18 @@ sub learn_message {
   # Replay 3 spam+ham cycles after the loop, this is sufficient to tame RPROP step sizes that accumulate
   # during the real-message epochs.
   if ($svec) {
-    for (1..3) {
-      eval { $network->train($svec, [1]); 1 } or dbg("Replay spam step failed: " . ($@ || 'unknown'));
-      eval { $network->train($hvec, [0]); 1 } or dbg("Replay ham step failed: " . ($@ || 'unknown'));
+    if ($isspam) {
+      for (1..3) {
+        eval { $network->train($hvec, [0]); 1 } or dbg("Replay ham step failed: " . ($@ || 'unknown'));
+        eval { $network->train($svec, [1]); 1 } or dbg("Replay spam step failed: " . ($@ || 'unknown'));
+      }
+    } else {
+      for (1..3) {
+        eval { $network->train($svec, [1]); 1 } or dbg("Replay spam step failed: " . ($@ || 'unknown'));
+        eval { $network->train($hvec, [0]); 1 } or dbg("Replay ham step failed: " . ($@ || 'unknown'));
+      }
     }
-    dbg("Replay: 3 cycles after $weighted_epochs epochs, " .
+    dbg("Replay: 3 cycles after $weighted_epochs epochs (ending on " . ($isspam ? "spam" : "ham") . "), " .
         "spam_docs=" . ($vocab_for_balance{_spam_count} || 1) .
         ", ham_docs=" . ($vocab_for_balance{_ham_count} || 1));
   }
