@@ -800,14 +800,16 @@ sub learn_message {
       my $output = [$labels[$i] ? 1 : 0];
       eval { $network->train($input, $output); 1 } or dbg("Training step failed: " . ($@ || 'unknown'));
     }
-    if ($svec) {
+  }
+
+  # Replay 3 spam+ham cycles after the loop, this is sufficient to tame RPROP step sizes that accumulate
+  # during the real-message epochs.
+  if ($svec) {
+    for (1..3) {
       eval { $network->train($svec, [1]); 1 } or dbg("Replay spam step failed: " . ($@ || 'unknown'));
       eval { $network->train($hvec, [0]); 1 } or dbg("Replay ham step failed: " . ($@ || 'unknown'));
     }
-  }
-
-  if ($svec) {
-    dbg("Replay: interleaved across $weighted_epochs epochs, " .
+    dbg("Replay: 3 cycles after $weighted_epochs epochs, " .
         "spam_docs=" . ($vocab_for_balance{_spam_count} || 1) .
         ", ham_docs=" . ($vocab_for_balance{_ham_count} || 1));
   }
