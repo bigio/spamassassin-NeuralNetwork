@@ -802,21 +802,29 @@ sub learn_message {
     }
   }
 
-  # Replay 3 spam+ham cycles after the loop, this is sufficient to tame RPROP step sizes that accumulate
-  # during the real-message epochs.
+  # Dynamic replay cycles to tame RPROP per-weight step sizes that accumulate during training epochs.
+  my $replay_cycles;
+  if ($train_algorithm == FANN_TRAIN_RPROP) {
+    $replay_cycles = int( sqrt($weighted_epochs / 10.0) * $class_weight + 0.5 ) || 1;
+    $replay_cycles = 1 if $replay_cycles < 1;
+    $replay_cycles = 6 if $replay_cycles > 6;
+  } else {
+    $replay_cycles = 1;
+  }
+
   if ($svec) {
     if ($isspam) {
-      for (1..3) {
+      for (1 .. $replay_cycles) {
         eval { $network->train($hvec, [0]); 1 } or dbg("Replay ham step failed: " . ($@ || 'unknown'));
         eval { $network->train($svec, [1]); 1 } or dbg("Replay spam step failed: " . ($@ || 'unknown'));
       }
     } else {
-      for (1..3) {
+      for (1 .. $replay_cycles) {
         eval { $network->train($svec, [1]); 1 } or dbg("Replay spam step failed: " . ($@ || 'unknown'));
         eval { $network->train($hvec, [0]); 1 } or dbg("Replay ham step failed: " . ($@ || 'unknown'));
       }
     }
-    dbg("Replay: 3 cycles after $weighted_epochs epochs (ending on " . ($isspam ? "spam" : "ham") . "), " .
+    dbg("Replay: $replay_cycles cycles after $weighted_epochs epochs (ending on " . ($isspam ? "spam" : "ham") . "), " .
         "spam_docs=" . ($vocab_for_balance{_spam_count} || 1) .
         ", ham_docs=" . ($vocab_for_balance{_ham_count} || 1));
   }
