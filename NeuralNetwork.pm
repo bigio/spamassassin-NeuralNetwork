@@ -785,7 +785,12 @@ sub learn_message {
 
   # Build class-representative vectors for replay before training begins.
   my ($svec, $hvec);
-  if (keys %{$vocab_for_balance{terms} || {}} && defined $vocab_keys_ref) {
+  my $sp_n = $vocab_for_balance{_spam_count} || 0;
+  my $hm_n = $vocab_for_balance{_ham_count}  || 0;
+  if (   $sp_n > 0 && $hm_n > 0
+      && ($sp_n > 1 || $hm_n > 1)
+      && keys %{$vocab_for_balance{terms} || {}}
+      && defined $vocab_keys_ref) {
     ($svec, $hvec) = _build_class_tfidf_vectors(\%vocab_for_balance, $vocab_keys_ref);
   }
 
