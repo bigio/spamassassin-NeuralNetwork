@@ -154,6 +154,10 @@ Algorithm used by Fann neural network used when training, might increase speed d
 Maximum number of seconds to wait for the exclusive training lock before giving up and skipping the learn operation.
 Set to 0 to wait indefinitely.
 
+=item neuralnetwork_rprop_delta_max n (default: 0.5)
+
+Delta value to apply to RPROP training replay loop.
+
 =item neuralnetwork_stopwords words (default: "the and for with that this from there their have be not but you your")
 
 Space-separated list of stopwords to ignore when tokenizing text.
@@ -300,6 +304,12 @@ prediction to run.
         $self->{neuralnetwork_train_algorithm} = $algorithm_map{$value};
     },
     type => $Mail::SpamAssassin::Conf::CONF_TYPE_NUMERIC,
+  });
+  push(@cmds, {
+    setting  => 'neuralnetwork_rprop_delta_max',
+    is_admin => 1,
+    default  => 0.5,
+    type     => $Mail::SpamAssassin::Conf::CONF_TYPE_NUMERIC,
   });
   push(@cmds, {
     setting => 'neuralnetwork_lock_timeout',
@@ -741,6 +751,9 @@ sub learn_message {
   $network->learning_rate($learning_rate);
   $network->learning_momentum($momentum);
   $network->training_algorithm($train_algorithm);
+  if ($train_algorithm == FANN_TRAIN_RPROP) {
+    $network->rprop_delta_max($conf->{neuralnetwork_rprop_delta_max});
+  }
 
   # Load the current corpus counts so we can compute how skewed the training
   # history is.
@@ -812,10 +825,19 @@ sub learn_message {
     $replay_cycles = 1;
   }
 
+  # Extra ham steps per replay cycle when spam dominates during spam training
+  my $ham_replay_mult = 1;
+  if ($isspam && $spam_docs > $ham_docs) {
+    $ham_replay_mult = int(log($spam_docs / $ham_docs) / log(2) + 1.5);
+    $ham_replay_mult = 5 if $ham_replay_mult > 5;
+  }
+
   if ($svec) {
     if ($isspam) {
       for (1 .. $replay_cycles) {
-        eval { $network->train($hvec, [0]); 1 } or dbg("Replay ham step failed: " . ($@ || 'unknown'));
+        for (1 .. $ham_replay_mult) {
+          eval { $network->train($hvec, [0]); 1 } or dbg("Replay ham step failed: " . ($@ || 'unknown'));
+        }
         eval { $network->train($svec, [1]); 1 } or dbg("Replay spam step failed: " . ($@ || 'unknown'));
       }
     } else {
@@ -824,7 +846,7 @@ sub learn_message {
         eval { $network->train($hvec, [0]); 1 } or dbg("Replay ham step failed: " . ($@ || 'unknown'));
       }
     }
-    dbg("Replay: $replay_cycles cycles after $weighted_epochs epochs (ending on " . ($isspam ? "spam" : "ham") . "), " .
+    dbg("Replay: $replay_cycles cycles, ham_replay_mult=$ham_replay_mult after $weighted_epochs epochs (ending on " . ($isspam ? "spam" : "ham") . "), " .
         "spam_docs=" . ($vocab_for_balance{_spam_count} || 1) .
         ", ham_docs=" . ($vocab_for_balance{_ham_count} || 1));
   }
@@ -1137,13 +1159,19 @@ sub _retrain_from_vocabulary {
   $network->learning_rate($learning_rate);
   $network->learning_momentum($momentum);
   $network->training_algorithm($train_algorithm);
+  if ($train_algorithm == FANN_TRAIN_RPROP) {
+    $network->rprop_delta_max($conf->{neuralnetwork_rprop_delta_max});
+  }
 
   for my $e (1 .. $train_epochs) {
-    for (1 .. $spam_reps) {
-      eval { $network->train(\@spam_vec, [1]); 1 } or dbg("Retrain spam step failed: " . ($@ || 'unknown'));
-    }
-    for (1 .. $ham_reps) {
-      eval { $network->train(\@ham_vec,  [0]); 1 } or dbg("Retrain ham step failed: " . ($@ || 'unknown'));
+    if ($spam_docs >= $ham_docs) {
+      # Spam-dominant: ham first, spam last so RPROP state ends spam-biased
+      eval { $network->train(\@ham_vec,  [0]); 1 } or dbg("Retrain ham step failed: "  . ($@ || 'unknown')) for (1 .. $ham_reps);
+      eval { $network->train(\@spam_vec, [1]); 1 } or dbg("Retrain spam step failed: " . ($@ || 'unknown')) for (1 .. $spam_reps);
+    } else {
+      # Ham-dominant: spam first, ham last so RPROP state ends ham-biased
+      eval { $network->train(\@spam_vec, [1]); 1 } or dbg("Retrain spam step failed: " . ($@ || 'unknown')) for (1 .. $spam_reps);
+      eval { $network->train(\@ham_vec,  [0]); 1 } or dbg("Retrain ham step failed: "  . ($@ || 'unknown')) for (1 .. $ham_reps);
     }
   }
 
