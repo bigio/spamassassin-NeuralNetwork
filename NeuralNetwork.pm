@@ -49,6 +49,7 @@ my $VERSION = 0.7.2;
 use AI::FANN qw(:all);
 use Storable qw(store retrieve);
 use File::Spec;
+use File::Temp ();
 
 use Mail::SpamAssassin;
 use Mail::SpamAssassin::Plugin;
@@ -857,14 +858,31 @@ sub learn_message {
     dbg("Prediction after learning: " . (defined $pred_after ? $pred_after : 'undef'));
   }
 
-  # Save the model
+  # Save the model atomically
   my $model_saved = 0;
+  my $tmp_path;
   eval {
-    $network->save($dataset_path) or die "model save failed";
+    my ($vol, $dir, undef) = File::Spec->splitpath($dataset_path);
+    my $tmp_dir = File::Spec->catpath($vol, $dir, '');
+    (undef, $tmp_path) = File::Temp::tempfile(
+      'fann-XXXXXX',
+      DIR    => $tmp_dir,
+      SUFFIX => '.tmp',
+      UNLINK => 0,
+    );
+    $network->save($tmp_path) or die "model save to temp '$tmp_path' failed";
+    rename($tmp_path, $dataset_path)
+      or die "atomic rename '$tmp_path' -> '$dataset_path' failed: $!";
+    $tmp_path = undef;
     $model_saved = 1;
     1;
   } or do {
-    info("Cannot save model to '$dataset_path' (" . ($@ || 'unknown') . ")");
+    my $err = $@ || 'unknown';
+    info("Cannot save model to '$dataset_path' ($err)");
+    if (defined $tmp_path && -f $tmp_path) {
+      unlink($tmp_path)
+        or info("Cannot remove temp model file '$tmp_path': $!");
+    }
   };
   $locker->safe_unlock($dataset_path);
 
