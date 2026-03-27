@@ -1099,11 +1099,14 @@ sub _build_class_tfidf_vectors {
   for my $i (0 .. $#$vocab_keys) {
     my $w   = $vocab_keys->[$i];
     my $td  = $terms->{$w} // {};
-    my $idf       = log(($N + 1) / (($td->{docs} || 0) + 1)) + 1;
-    my $spam_rate = ($td->{spam} || 0) / $spam_docs;
-    my $ham_rate  = ($td->{ham}  || 0) / $ham_docs;
-    $spam_vec[$i] = ($spam_rate > $ham_rate) ? ($spam_rate - $ham_rate) * $idf : 0;
-    $ham_vec[$i]  = ($ham_rate > $spam_rate) ? ($ham_rate - $spam_rate) * $idf : 0;
+    my $idf        = log(($N + 1) / (($td->{docs} || 0) + 1)) + 1;
+    my $spam_count = $td->{spam} || 0;
+    my $ham_count  = $td->{ham}  || 0;
+    if ($spam_count > $ham_count) {
+      $spam_vec[$i] = ($spam_count - $ham_count) / $spam_docs * $idf;
+    } elsif ($ham_count > $spam_count) {
+      $ham_vec[$i]  = ($ham_count - $spam_count) / $ham_docs * $idf;
+    }
   }
 
   for my $vec (\@spam_vec, \@ham_vec) {
