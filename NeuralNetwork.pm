@@ -833,23 +833,30 @@ sub learn_message {
     $ham_replay_mult = 5 if $ham_replay_mult > 5;
   }
 
-  if ($svec) {
-    if ($isspam) {
-      for (1 .. $replay_cycles) {
-        for (1 .. $ham_replay_mult) {
+  if($svec && $hvec) {
+    my $expected_len = scalar(@$vocab_keys_ref);
+    my $svec_ok = scalar(@$svec) == $expected_len && grep { $_ != 0 } @$svec;
+    my $hvec_ok = scalar(@$hvec) == $expected_len && grep { $_ != 0 } @$hvec;
+    if ($svec_ok && $hvec_ok) {
+      if ($isspam) {
+        for (1 .. $replay_cycles) {
+          for (1 .. $ham_replay_mult) {
+            eval { $network->train($hvec, [0]); 1 } or dbg("Replay ham step failed: " . ($@ || 'unknown'));
+          }
+          eval { $network->train($svec, [1]); 1 } or dbg("Replay spam step failed: " . ($@ || 'unknown'));
+        }
+      } else {
+        for (1 .. $replay_cycles) {
+          eval { $network->train($svec, [1]); 1 } or dbg("Replay spam step failed: " . ($@ || 'unknown'));
           eval { $network->train($hvec, [0]); 1 } or dbg("Replay ham step failed: " . ($@ || 'unknown'));
         }
-        eval { $network->train($svec, [1]); 1 } or dbg("Replay spam step failed: " . ($@ || 'unknown'));
       }
-    } else {
-      for (1 .. $replay_cycles) {
-        eval { $network->train($svec, [1]); 1 } or dbg("Replay spam step failed: " . ($@ || 'unknown'));
-        eval { $network->train($hvec, [0]); 1 } or dbg("Replay ham step failed: " . ($@ || 'unknown'));
-      }
-    }
-    dbg("Replay: $replay_cycles cycles, ham_replay_mult=$ham_replay_mult after $weighted_epochs epochs (ending on " . ($isspam ? "spam" : "ham") . "), " .
+      dbg("Replay: $replay_cycles cycles, ham_replay_mult=$ham_replay_mult after $weighted_epochs epochs (ending on " . ($isspam ? "spam" : "ham") . "), " .
         "spam_docs=" . ($vocab_for_balance{_spam_count} || 1) .
         ", ham_docs=" . ($vocab_for_balance{_ham_count} || 1));
+    } else {
+      dbg("Skipping replay: vectors degenerated or size mismatch (svec_ok=$svec_ok, hvec_ok=$hvec_ok)");
+    }
   }
 
   if (scalar(@$feature_vectors) == 1) {
@@ -1095,7 +1102,9 @@ sub _build_class_tfidf_vectors {
   my $spam_docs = $vocabulary->{_spam_count} || 1;
   my $ham_docs  = $vocabulary->{_ham_count}  || 1;
 
-  my (@spam_vec, @ham_vec);
+  my @spam_vec = (0) x scalar(@$vocab_keys);
+  my @ham_vec = (0) x scalar(@$vocab_keys);
+
   for my $i (0 .. $#$vocab_keys) {
     my $w   = $vocab_keys->[$i];
     my $td  = $terms->{$w} // {};
