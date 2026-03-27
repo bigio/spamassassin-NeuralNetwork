@@ -1111,7 +1111,7 @@ sub _build_class_tfidf_vectors {
 
   for my $vec (\@spam_vec, \@ham_vec) {
     my $norm = sqrt(do { my $s = 0; $s += $_ * $_ for @$vec; $s }) || 1;
-    @$vec = map { $_ / $norm } @$vec;
+    @$vec = map { ($_ // 0) / $norm } @$vec;
   }
 
   return (\@spam_vec, \@ham_vec);
