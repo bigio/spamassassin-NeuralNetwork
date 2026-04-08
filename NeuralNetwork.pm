@@ -44,7 +44,7 @@ use strict;
 use warnings;
 use re 'taint';
 
-my $VERSION = 0.7.2;
+my $VERSION = 0.7.3;
 
 use AI::FANN qw(:all);
 use Storable qw(store retrieve);
@@ -475,7 +475,7 @@ sub _text_to_features {
     # Ensure we have enough spam and ham examples in the vocabulary
     my $min_spam = $conf->{neuralnetwork_min_spam_count};
     my $min_ham  = $conf->{neuralnetwork_min_ham_count};
-    if (!$train) {
+    if ($train == 0) {
       if ( ($vocabulary{_spam_count} < $min_spam) || ($vocabulary{_ham_count} < $min_ham) ) {
         dbg("Insufficient spam/ham data for prediction: spam=".$vocabulary{_spam_count}.", ham=".$vocabulary{_ham_count});
         return ([], 0);
@@ -490,7 +490,7 @@ sub _text_to_features {
 
     # When training, build per-document term sets to update doc counts
     my $local_doc_increment = 0;
-    if ($train) {
+    if ($train == 1) {
       foreach my $email_text (@emails) {
         next unless defined $email_text;
         my @tokens = $tokenize->($email_text);
@@ -730,11 +730,12 @@ sub learn_message {
       dbg("Vocabulary size changed ($num_input vs model $model_size), rebuilding training vectors with model vocabulary");
       my $stored_vocab_ref = $self->_load_model_vocab($nn_data_dir);
       if (defined $stored_vocab_ref && scalar(@$stored_vocab_ref) == $model_size) {
-        ($feature_vectors, undef) = _text_to_features($self, $self->{main}->{conf}, $nn_data_dir, 0, undef, $stored_vocab_ref, @email_texts);
+        ($feature_vectors, undef) = _text_to_features($self, $self->{main}->{conf}, $nn_data_dir, 2, undef, $stored_vocab_ref, @email_texts);
         $vocab_keys_ref = $stored_vocab_ref;
       } else {
         dbg("Model vocabulary file not found or mismatched, falling back to vector adjustment");
         $feature_vectors = [ map { my $v = _adjust_vector_size($_->{vec}, $model_size); { vec => $v, hits => scalar grep { $_ != 0 } @$v } } @$feature_vectors ];
+        $vocab_keys_ref = undef;
       }
       $num_input = $model_size;
       $network = $existing_network;
@@ -797,17 +798,6 @@ sub learn_message {
       "(base=$train_epochs, class_weight=$class_weight, " .
       "spam_docs=$spam_docs, ham_docs=$ham_docs, isspam=$isspam)");
 
-  # Build class-representative vectors for replay before training begins.
-  my ($svec, $hvec);
-  my $sp_n = $vocab_for_balance{_spam_count} || 0;
-  my $hm_n = $vocab_for_balance{_ham_count}  || 0;
-  if (   $sp_n > 0 && $hm_n > 0
-      && ($sp_n > 1 || $hm_n > 1)
-      && keys %{$vocab_for_balance{terms} || {}}
-      && defined $vocab_keys_ref) {
-    ($svec, $hvec) = _build_class_tfidf_vectors(\%vocab_for_balance, $vocab_keys_ref);
-  }
-
   for my $e (1 .. $weighted_epochs) {
     for my $i (0 .. $#$feature_vectors) {
       my $input  = $feature_vectors->[$i]{vec};
@@ -816,47 +806,42 @@ sub learn_message {
     }
   }
 
-  # Dynamic replay cycles to tame RPROP per-weight step sizes that accumulate during training epochs.
-  my $replay_cycles;
-  if ($train_algorithm == FANN_TRAIN_RPROP) {
-    $replay_cycles = int( sqrt($weighted_epochs / 10.0) * $class_weight + 0.5 ) || 1;
-    $replay_cycles = 1 if $replay_cycles < 1;
-    $replay_cycles = 6 if $replay_cycles > 6;
-  } else {
-    $replay_cycles = 1;
-  }
+  # Dynamic replay algorithm
+  if (   $train_algorithm == FANN_TRAIN_RPROP
+      && defined $vocab_keys_ref
+      && scalar(@$vocab_keys_ref) == $num_input
+      && $spam_docs > 1 && $ham_docs > 1) {
 
-  # Extra ham steps per replay cycle when spam dominates during spam training
-  my $ham_replay_mult = 1;
-  if ($isspam && $spam_docs > $ham_docs) {
-    $ham_replay_mult = int(log($spam_docs / $ham_docs) / log(2) + 1.5);
-    $ham_replay_mult = 5 if $ham_replay_mult > 5;
-  }
+    my ($svec, $hvec) = _build_class_tfidf_vectors(\%vocab_for_balance, $vocab_keys_ref);
 
-  if($svec && $hvec) {
-    my $expected_len = scalar(@$vocab_keys_ref);
-    my $svec_ok = scalar(@$svec) == $expected_len && grep { $_ != 0 } @$svec;
-    my $hvec_ok = scalar(@$hvec) == $expected_len && grep { $_ != 0 } @$hvec;
-    if ($svec_ok && $hvec_ok) {
-      if ($isspam) {
-        for (1 .. $replay_cycles) {
-          for (1 .. $ham_replay_mult) {
-            eval { $network->train($hvec, [0]); 1 } or dbg("Replay ham step failed: " . ($@ || 'unknown'));
+    if ($svec && $hvec) {
+      # Use grep in scalar context: returns count of non-zero elements.
+      my $svec_ok = grep { $_ != 0 } @$svec;
+      my $hvec_ok = grep { $_ != 0 } @$hvec;
+
+      if ($svec_ok && $hvec_ok) {
+        my $replay_cycles = int(sqrt($weighted_epochs / 10.0) + 0.5) || 1;
+        $replay_cycles = 6 if $replay_cycles > 6;
+
+        if ($isspam) {
+          for (1 .. $replay_cycles) {
+            eval { $network->train($hvec, [0]); 1 } or dbg("Replay ham step failed: "  . ($@ || 'unknown'));
+            eval { $network->train($svec, [1]); 1 } or dbg("Replay spam step failed: " . ($@ || 'unknown'));
           }
-          eval { $network->train($svec, [1]); 1 } or dbg("Replay spam step failed: " . ($@ || 'unknown'));
+        } else {
+          for (1 .. $replay_cycles) {
+            eval { $network->train($svec, [1]); 1 } or dbg("Replay spam step failed: " . ($@ || 'unknown'));
+            eval { $network->train($hvec, [0]); 1 } or dbg("Replay ham step failed: "  . ($@ || 'unknown'));
+          }
         }
+        dbg("RPROP replay: $replay_cycles cycle(s) after $weighted_epochs epoch(s) " .
+            "(isspam=$isspam, spam_docs=$spam_docs, ham_docs=$ham_docs)");
       } else {
-        for (1 .. $replay_cycles) {
-          eval { $network->train($svec, [1]); 1 } or dbg("Replay spam step failed: " . ($@ || 'unknown'));
-          eval { $network->train($hvec, [0]); 1 } or dbg("Replay ham step failed: " . ($@ || 'unknown'));
-        }
+        dbg("Skipping RPROP replay: degenerate vectors (svec_ok=$svec_ok, hvec_ok=$hvec_ok)");
       }
-      dbg("Replay: $replay_cycles cycles, ham_replay_mult=$ham_replay_mult after $weighted_epochs epochs (ending on " . ($isspam ? "spam" : "ham") . "), " .
-        "spam_docs=" . ($vocab_for_balance{_spam_count} || 1) .
-        ", ham_docs=" . ($vocab_for_balance{_ham_count} || 1));
-    } else {
-      dbg("Skipping replay: vectors degenerated or size mismatch (svec_ok=$svec_ok, hvec_ok=$hvec_ok)");
     }
+  } elsif ($train_algorithm == FANN_TRAIN_RPROP && !defined $vocab_keys_ref) {
+    dbg("Skipping RPROP replay: vocab_keys unavailable");
   }
 
   if (scalar(@$feature_vectors) == 1) {
@@ -909,7 +894,7 @@ sub learn_message {
       $self->_save_msgid_to_neural_seen($msgid, $isspam);
     }
   }
-  return;
+  return $model_saved;
 }
 
 sub forget_message {
@@ -1108,14 +1093,11 @@ sub _build_class_tfidf_vectors {
   for my $i (0 .. $#$vocab_keys) {
     my $w   = $vocab_keys->[$i];
     my $td  = $terms->{$w} // {};
-    my $idf        = log(($N + 1) / (($td->{docs} || 0) + 1)) + 1;
-    my $spam_count = $td->{spam} || 0;
-    my $ham_count  = $td->{ham}  || 0;
-    if ($spam_count > $ham_count) {
-      $spam_vec[$i] = ($spam_count - $ham_count) / $spam_docs * $idf;
-    } elsif ($ham_count > $spam_count) {
-      $ham_vec[$i]  = ($ham_count - $spam_count) / $ham_docs * $idf;
-    }
+    my $idf       = log(($N + 1) / (($td->{docs} || 0) + 1)) + 1;
+    my $spam_rate = ($td->{spam} || 0) / $spam_docs;
+    my $ham_rate  = ($td->{ham}  || 0) / $ham_docs;
+    $spam_vec[$i] = ($spam_rate > $ham_rate) ? ($spam_rate - $ham_rate) * $idf : 0;
+    $ham_vec[$i]  = ($ham_rate > $spam_rate) ? ($ham_rate - $spam_rate) * $idf : 0;
   }
 
   for my $vec (\@spam_vec, \@ham_vec) {
@@ -1725,6 +1707,7 @@ sub _model_vocab_path {
 
 sub _save_model_vocab {
   my ($self, $vocab_keys_ref, $nn_data_dir) = @_;
+  return unless defined $vocab_keys_ref;
   my $vocab_path = $self->_model_vocab_path($nn_data_dir);
   $vocab_path = Mail::SpamAssassin::Util::untaint_file_path($vocab_path);
   eval {
