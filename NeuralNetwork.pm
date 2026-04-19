@@ -1021,8 +1021,21 @@ sub check_neuralnetwork_ham {
   return $pms->{neuralnetwork_ham};
 }
 
-# Prune vocabulary to keep only the top $vocab_cap terms, balanced between
-# spam and ham terms.
+# Compute chi-squared score measuring how discriminative a vocabulary term
+# is between spam and ham.  Returns 0 when there is insufficient data.
+sub _chi2_score {
+  my ($spam, $ham, $total_spam, $total_ham) = @_;
+  my $total = $total_spam + $total_ham;
+  return 0 unless $total > 0;
+  my $total_spam_noterm = $total_spam - $spam;
+  my $total_ham_noterm = $total_ham  - $ham;
+  my $denom = ($spam+$ham) * ($total - $spam - $ham) * $total_spam * $total_ham;
+  return 0 unless $denom > 0;
+  return ($total * ($spam*$total_ham_noterm - $ham*$total_spam_noterm)**2) / $denom;
+}
+
+# Prune vocabulary to keep only the top $vocab_cap terms ranked by chi-squared
+# discriminativeness score, ensuring the most class-separating terms are kept.
 sub _prune_vocabulary {
   my ($self, $vocabulary, $vocab_cap) = @_;
 
@@ -1033,19 +1046,22 @@ sub _prune_vocabulary {
   # Prune to 90% of cap so the vocabulary has room to grow before the next
   # prune is triggered.
   my $prune_target = int($vocab_cap * 0.9) || 1;
-  my $half = int($prune_target / 2);
+
+  my $spam_docs = $vocabulary->{_spam_count} || 1;
+  my $ham_docs  = $vocabulary->{_ham_count}  || 1;
+
+  # Score every term by chi-squared discriminativeness and keep the best
+  my %scores;
+  for my $w (keys %{$terms}) {
+    $scores{$w} = _chi2_score(
+      $terms->{$w}{spam} || 0,
+      $terms->{$w}{ham}  || 0,
+      $spam_docs, $ham_docs
+    );
+  }
 
   my %kept;
-  for my $w (sort { ($terms->{$b}{spam}||0) <=> ($terms->{$a}{spam}||0) } keys %{$terms}) {
-    last if scalar keys %kept >= $half;
-    $kept{$w} = $terms->{$w};
-  }
-  for my $w (sort { ($terms->{$b}{ham}||0) <=> ($terms->{$a}{ham}||0) } keys %{$terms}) {
-    last if scalar keys %kept >= $prune_target;
-    $kept{$w} = $terms->{$w};
-  }
-  # Fill any remaining slots
-  for my $w (sort { ($terms->{$b}{total}||0) <=> ($terms->{$a}{total}||0) } keys %{$terms}) {
+  for my $w (sort { $scores{$b} <=> $scores{$a} } keys %{$terms}) {
     last if scalar keys %kept >= $prune_target;
     $kept{$w} = $terms->{$w};
   }
