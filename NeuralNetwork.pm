@@ -751,8 +751,9 @@ sub learn_message {
       if (!defined $network) {
         # No vocabulary stats available yet, create a fresh network
         $network = AI::FANN->new_standard($num_input, $num_hidden1, $num_hidden2, $num_output_neurons);
-        $network->hidden_activation_function(FANN_SIGMOID_STEPWISE);
-        $network->output_activation_function(FANN_SIGMOID_STEPWISE);
+        my $act_fn = ($train_algorithm == FANN_TRAIN_RPROP) ? FANN_SIGMOID_STEPWISE : FANN_SIGMOID;
+        $network->hidden_activation_function($act_fn);
+        $network->output_activation_function($act_fn);
       }
     }
   }
@@ -1202,8 +1203,9 @@ sub _retrain_from_vocabulary {
   my $num_hidden2 = int($num_hidden1 / 2);
   $num_hidden2 = 16  if $num_hidden2 < 16;
   my $network = AI::FANN->new_standard($vocab_size, $num_hidden1, $num_hidden2, 1);
-  $network->hidden_activation_function(FANN_SIGMOID_STEPWISE);
-  $network->output_activation_function(FANN_SIGMOID_STEPWISE);
+  my $act_fn = ($train_algorithm == FANN_TRAIN_RPROP) ? FANN_SIGMOID_STEPWISE : FANN_SIGMOID;
+  $network->hidden_activation_function($act_fn);
+  $network->output_activation_function($act_fn);
   $network->learning_rate($learning_rate);
   $network->learning_momentum($momentum);
   $network->training_algorithm($train_algorithm);
