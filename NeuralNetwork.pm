@@ -706,7 +706,13 @@ sub learn_message {
     $locker->safe_unlock($dataset_path);
     return;
   }
-  my $num_hidden_neurons = int(sqrt($num_input)) || 1;
+  # Two-layer hidden sizing: layer1 ~10% of inputs (clamped 32..512),
+  # layer2 half of layer1 (min 16).
+  my $num_hidden1 = int($num_input / 10);
+  $num_hidden1 = 512 if $num_hidden1 > 512;
+  $num_hidden1 = 32  if $num_hidden1 < 32;
+  my $num_hidden2 = int($num_hidden1 / 2);
+  $num_hidden2 = 16  if $num_hidden2 < 16;
   my $num_output_neurons = 1;
 
   my $network;
@@ -744,7 +750,7 @@ sub learn_message {
       $network = $self->_retrain_from_vocabulary($self->{main}->{conf}, $nn_data_dir, $num_input);
       if (!defined $network) {
         # No vocabulary stats available yet, create a fresh network
-        $network = AI::FANN->new_standard($num_input, $num_hidden_neurons, $num_output_neurons);
+        $network = AI::FANN->new_standard($num_input, $num_hidden1, $num_hidden2, $num_output_neurons);
         $network->hidden_activation_function(FANN_SIGMOID_STEPWISE);
         $network->output_activation_function(FANN_SIGMOID_STEPWISE);
       }
@@ -1190,8 +1196,12 @@ sub _retrain_from_vocabulary {
       "spam_reps=$spam_reps, ham_reps=$ham_reps, epochs=$train_epochs");
 
   # Create and train new network
-  my $num_hidden = int(sqrt($vocab_size)) || 1;
-  my $network = AI::FANN->new_standard($vocab_size, $num_hidden, 1);
+  my $num_hidden1 = int($vocab_size / 10);
+  $num_hidden1 = 512 if $num_hidden1 > 512;
+  $num_hidden1 = 32  if $num_hidden1 < 32;
+  my $num_hidden2 = int($num_hidden1 / 2);
+  $num_hidden2 = 16  if $num_hidden2 < 16;
+  my $network = AI::FANN->new_standard($vocab_size, $num_hidden1, $num_hidden2, 1);
   $network->hidden_activation_function(FANN_SIGMOID_STEPWISE);
   $network->output_activation_function(FANN_SIGMOID_STEPWISE);
   $network->learning_rate($learning_rate);
