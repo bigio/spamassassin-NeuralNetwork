@@ -832,8 +832,8 @@ sub learn_message {
       my $hvec_ok = grep { $_ != 0 } @$hvec;
 
       if ($svec_ok && $hvec_ok) {
-        my $replay_cycles = int(sqrt($weighted_epochs / 10.0) + 0.5) || 1;
-        $replay_cycles = 6 if $replay_cycles > 6;
+        my $replay_cycles = int(sqrt($weighted_epochs / 5.0) + 0.5) || 1;
+        $replay_cycles = 12 if $replay_cycles > 12;
 
         if ($isspam) {
           for (1 .. $replay_cycles) {
