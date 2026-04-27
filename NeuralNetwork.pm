@@ -864,6 +864,7 @@ sub learn_message {
   # Save the model atomically
   my $model_saved = 0;
   my $tmp_path;
+  my $file_mode = 0666 & ~umask();
   eval {
     my ($vol, $dir, undef) = File::Spec->splitpath($dataset_path);
     my $tmp_dir = File::Spec->catpath($vol, $dir, '');
@@ -873,6 +874,7 @@ sub learn_message {
       SUFFIX => '.tmp',
       UNLINK => 0,
     );
+    chmod($file_mode, $tmp_path) or info("chmod $file_mode on '$tmp_path' failed: $!");
     $network->save($tmp_path) or die "model save to temp '$tmp_path' failed";
     rename($tmp_path, $dataset_path)
       or die "atomic rename '$tmp_path' -> '$dataset_path' failed: $!";
@@ -1307,6 +1309,7 @@ sub _check_neuralnetwork {
       1;
     };
 
+    my $file_mode = 0666 & ~umask();
     eval {
       $self->{neural_model} = AI::FANN->new_from_file($dataset_path);
       $self->{_neural_model_load_time} = time();
@@ -1334,6 +1337,7 @@ sub _check_neuralnetwork {
           my $tmp_dir = File::Spec->catpath($vol, $dir, '');
           my (undef, $tmp_path) = File::Temp::tempfile(
             'fann-XXXXXX', DIR => $tmp_dir, SUFFIX => '.tmp', UNLINK => 0);
+          chmod($file_mode, $tmp_path) or info("chmod $file_mode on '$tmp_path' failed: $!");  
           if ($rebuilt->save($tmp_path)) {
             rename($tmp_path, $dataset_path)
               or die "rename failed: $!";
