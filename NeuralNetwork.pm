@@ -1269,37 +1269,18 @@ sub _check_neuralnetwork {
     return;
   }
 
-  # Load the vocabulary the model was trained on so the feature vector dimensions
-  # are always aligned with the model, regardless of subsequent vocabulary growth.
-  my $stored_vocab_ref = $self->_load_model_vocab($nn_data_dir);
-
-  # Do not update the vocabulary
-  my $update_vocab = 0;
-
-  # Convert email to feature vector using the model's vocabulary
-  my ($feature_vectors, $vocab_size) = _text_to_features($self, $conf, $nn_data_dir, $update_vocab, undef, $stored_vocab_ref, $email_to_predict);
-  unless ($feature_vectors && @$feature_vectors) {
-    $pms->{neuralnetwork_prediction} = undef;
-    dbg("Not enough tokens found");
-    return;
-  }
-
-  my $min_hits = $conf->{neuralnetwork_min_vocab_hits};
-  my $hits     = $feature_vectors->[0]{hits};
-  if ($hits < $min_hits) {
-    $pms->{neuralnetwork_prediction} = undef;
-    dbg("Too few vocabulary hits ($hits < $min_hits), skipping prediction");
-    return;
-  }
-  my $input_vector = $feature_vectors->[0]{vec};
-
+  # Reload model if it has expired or the file has changed since last load
   my $ttl = $conf->{neuralnetwork_cache_ttl} || 0;
   my $model_age = defined $self->{_neural_model_load_time} ? time() - $self->{_neural_model_load_time} : undef;
   my $model_expired = defined $model_age && $ttl > 0 && $model_age >= $ttl;
+  my $model_mtime   = (stat($dataset_path))[9] // 0;
+  my $model_changed = $model_mtime > ($self->{_neural_model_load_time} // 0);
 
-  if (!defined $self->{neural_model} || $model_expired) {
+  if (!defined $self->{neural_model} || $model_expired || $model_changed) {
     if ($model_expired) {
       dbg("Model cache expired (age: ${model_age}s, ttl: ${ttl}s), reloading");
+    } elsif ($model_changed) {
+      dbg("Model file changed on disk, reloading");
     }
 
     my $locker = $self->{main}->{locker};
@@ -1324,9 +1305,11 @@ sub _check_neuralnetwork {
 
       # rebuild an in-memory model from vocabulary statistics
       undef $self->{neural_model};
+      my $rebuild_vocab_ref  = $self->_load_model_vocab($nn_data_dir);
+      my $rebuild_vocab_size = (defined $rebuild_vocab_ref && @$rebuild_vocab_ref)
+        ? scalar(@$rebuild_vocab_ref) : 0;
       my $rebuilt = eval {
-        $self->_retrain_from_vocabulary($conf, $nn_data_dir,
-          $feature_vectors->[0] ? scalar(@{$feature_vectors->[0]{vec}}) : 0);
+        $self->_retrain_from_vocabulary($conf, $nn_data_dir, $rebuild_vocab_size);
       };
       if ($rebuilt) {
         dbg("Vocabulary rebuild succeeded");
@@ -1338,7 +1321,7 @@ sub _check_neuralnetwork {
           my $tmp_dir = File::Spec->catpath($vol, $dir, '');
           my (undef, $tmp_path) = File::Temp::tempfile(
             'fann-XXXXXX', DIR => $tmp_dir, SUFFIX => '.tmp', UNLINK => 0);
-          chmod($file_mode, $tmp_path) or info("chmod $file_mode on '$tmp_path' failed: $!");  
+          chmod($file_mode, $tmp_path) or info("chmod $file_mode on '$tmp_path' failed: $!");
           if ($rebuilt->save($tmp_path)) {
             rename($tmp_path, $dataset_path)
               or die "rename failed: $!";
@@ -1358,6 +1341,28 @@ sub _check_neuralnetwork {
     $locker->safe_unlock($dataset_path) if $got_lock;
   }
   my $network = $self->{neural_model};
+
+  my $stored_vocab_ref = $self->_load_model_vocab($nn_data_dir);
+
+  # Do not update the vocabulary
+  my $update_vocab = 0;
+
+  # Convert email to feature vector using the model's vocabulary
+  my ($feature_vectors, $vocab_size) = _text_to_features($self, $conf, $nn_data_dir, $update_vocab, undef, $stored_vocab_ref, $email_to_predict);
+  unless ($feature_vectors && @$feature_vectors) {
+    $pms->{neuralnetwork_prediction} = undef;
+    dbg("Not enough tokens found");
+    return;
+  }
+
+  my $min_hits = $conf->{neuralnetwork_min_vocab_hits};
+  my $hits     = $feature_vectors->[0]{hits};
+  if ($hits < $min_hits) {
+    $pms->{neuralnetwork_prediction} = undef;
+    dbg("Too few vocabulary hits ($hits < $min_hits), skipping prediction");
+    return;
+  }
+  my $input_vector = $feature_vectors->[0]{vec};
 
   my $expected_size = $network->num_inputs();
   if (scalar(@$input_vector) != $expected_size) {
