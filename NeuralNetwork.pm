@@ -126,11 +126,11 @@ Minimum number of spam messages in the vocabulary required to enable prediction.
 
 Minimum number of ham messages in the vocabulary required to enable prediction.
 
-=item neuralnetwork_spam_threshold f (default: 0.8)
+=item neuralnetwork_spam_threshold f (default: 0.6)
 
 Prediction values above this threshold are considered spam.
 
-=item neuralnetwork_ham_threshold f (default: 0.2)
+=item neuralnetwork_ham_threshold f (default: 0.4)
 
 Prediction values below this threshold are considered ham.
 
@@ -260,13 +260,13 @@ prediction to run.
   push(@cmds, {
     setting => 'neuralnetwork_spam_threshold',
     is_admin => 1,
-    default => 0.8,
+    default => 0.6,
     type => $Mail::SpamAssassin::Conf::CONF_TYPE_NUMERIC,
   });
   push(@cmds, {
     setting => 'neuralnetwork_ham_threshold',
     is_admin => 1,
-    default => 0.2,
+    default => 0.4,
     type => $Mail::SpamAssassin::Conf::CONF_TYPE_NUMERIC,
   });
   push(@cmds, {
@@ -796,8 +796,8 @@ sub learn_message {
   } else {
     $class_weight = $spam_docs / $ham_docs;   # < 1 when ham dominates
   }
-  $class_weight = 0.5 if $class_weight < 0.5;
-  $class_weight = 2.0 if $class_weight > 2.0;
+  $class_weight = 0.25 if $class_weight < 0.25;
+  $class_weight = 4.0  if $class_weight > 4.0;
 
   my $weighted_epochs = int($train_epochs * $class_weight) || 1;
   # Scale epochs down for large vocabularies to keep per-message training time
@@ -833,14 +833,13 @@ sub learn_message {
       if ($svec_ok && $hvec_ok) {
         my $replay_cycles = int(sqrt($weighted_epochs / 5.0) + 0.5) || 1;
         $replay_cycles = 12 if $replay_cycles > 12;
-
-        if ($isspam) {
-          for (1 .. $replay_cycles) {
+        # Alternate the order of (own, opposite) across cycles so the
+        # very last gradient step is not locked to the message's class.
+        for my $i (1 .. $replay_cycles) {
+          if ($i % 2 == ($isspam ? 1 : 0)) {
             eval { $network->train($hvec, [0]); 1 } or dbg("Replay ham step failed: "  . ($@ || 'unknown'));
             eval { $network->train($svec, [1]); 1 } or dbg("Replay spam step failed: " . ($@ || 'unknown'));
-          }
-        } else {
-          for (1 .. $replay_cycles) {
+          } else {
             eval { $network->train($svec, [1]); 1 } or dbg("Replay spam step failed: " . ($@ || 'unknown'));
             eval { $network->train($hvec, [0]); 1 } or dbg("Replay ham step failed: "  . ($@ || 'unknown'));
           }

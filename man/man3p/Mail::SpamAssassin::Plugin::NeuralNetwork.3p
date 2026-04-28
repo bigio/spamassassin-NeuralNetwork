@@ -58,7 +58,7 @@
 .\" ========================================================================
 .\"
 .IX Title "NeuralNetwork 3"
-.TH NeuralNetwork 3 2026-03-25 "perl v5.42.1" "User Contributed Perl Documentation"
+.TH NeuralNetwork 3 2026-04-28 "perl v5.42.2" "User Contributed Perl Documentation"
 .\" For nroff, turn off justification.  Always turn off hyphenation; it makes
 .\" way too many mistakes in technical documents.
 .if n .ad l
@@ -104,11 +104,11 @@ Minimum number of spam messages in the vocabulary required to enable prediction.
 .IP "neuralnetwork_min_ham_count n (default: 100)" 4
 .IX Item "neuralnetwork_min_ham_count n (default: 100)"
 Minimum number of ham messages in the vocabulary required to enable prediction.
-.IP "neuralnetwork_spam_threshold f (default: 0.8)" 4
-.IX Item "neuralnetwork_spam_threshold f (default: 0.8)"
+.IP "neuralnetwork_spam_threshold f (default: 0.6)" 4
+.IX Item "neuralnetwork_spam_threshold f (default: 0.6)"
 Prediction values above this threshold are considered spam.
-.IP "neuralnetwork_ham_threshold f (default: 0.2)" 4
-.IX Item "neuralnetwork_ham_threshold f (default: 0.2)"
+.IP "neuralnetwork_ham_threshold f (default: 0.4)" 4
+.IX Item "neuralnetwork_ham_threshold f (default: 0.4)"
 Prediction values below this threshold are considered ham.
 .IP "neuralnetwork_learning_rate f (default: 0.1)" 4
 .IX Item "neuralnetwork_learning_rate f (default: 0.1)"
