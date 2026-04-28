@@ -876,6 +876,14 @@ sub learn_message {
     );
     chmod($file_mode, $tmp_path) or info("chmod $file_mode on '$tmp_path' failed: $!");
     $network->save($tmp_path) or die "model save to temp '$tmp_path' failed";
+
+    if (defined $self->{main}->{conf}->{neuralnetwork_dsn} && $self->{dbh}) {
+      $self->_save_model_vocab_to_sql($vocab_keys_ref);
+    } else {
+      $self->_save_model_vocab($vocab_keys_ref, $nn_data_dir);
+    }
+    delete $self->{_model_vocab_cache};
+    delete $self->{_model_vocab_cache_t};
     rename($tmp_path, $dataset_path)
       or die "atomic rename '$tmp_path' -> '$dataset_path' failed: $!";
     $tmp_path = undef;
@@ -895,12 +903,6 @@ sub learn_message {
     dbg("Model saved to '$dataset_path' (input:$num_input)");
     $self->{neural_model} = $network;
     $self->{_neural_model_load_time} = time();
-
-    if (defined $self->{main}->{conf}->{neuralnetwork_dsn} && $self->{dbh}) {
-      $self->_save_model_vocab_to_sql($vocab_keys_ref);
-    } else {
-      $self->_save_model_vocab($vocab_keys_ref, $nn_data_dir);
-    }
 
     # Record message as learned to prevent re-learning.
     if (defined $msg && defined $msgid && length($msgid) > 0) {
