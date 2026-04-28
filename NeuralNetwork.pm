@@ -1258,30 +1258,6 @@ sub _check_neuralnetwork {
     return;
   }
 
-  # Load the vocabulary the model was trained on so the feature vector dimensions
-  # are always aligned with the model, regardless of subsequent vocabulary growth.
-  my $stored_vocab_ref = $self->_load_model_vocab($nn_data_dir);
-
-  # Do not update the vocabulary
-  my $update_vocab = 0;
-
-  # Convert message tokens to feature vector using the model's vocabulary
-  my ($feature_vectors, $vocab_size) = _text_to_features($self, $conf, $nn_data_dir, $update_vocab, undef, $stored_vocab_ref, $tokens_ref);
-  unless ($feature_vectors && @$feature_vectors) {
-    $pms->{neuralnetwork_prediction} = undef;
-    dbg("Not enough tokens found");
-    return;
-  }
-
-  my $min_hits = $conf->{neuralnetwork_min_vocab_hits};
-  my $hits     = $feature_vectors->[0]{hits};
-  if ($hits < $min_hits) {
-    $pms->{neuralnetwork_prediction} = undef;
-    dbg("Too few vocabulary hits ($hits < $min_hits), skipping prediction");
-    return;
-  }
-  my $input_vector = $feature_vectors->[0]{vec};
-
   # Reload model if it has expired or the file has changed since last load
   my $ttl = $conf->{neuralnetwork_cache_ttl} || 0;
   my $model_age = defined $self->{_neural_model_load_time} ? time() - $self->{_neural_model_load_time} : undef;
@@ -1361,7 +1337,7 @@ sub _check_neuralnetwork {
   my $update_vocab = 0;
 
   # Convert email to feature vector using the model's vocabulary
-  my ($feature_vectors, $vocab_size) = _text_to_features($self, $conf, $nn_data_dir, $update_vocab, undef, $stored_vocab_ref, $email_to_predict);
+  my ($feature_vectors, $vocab_size) = _text_to_features($self, $conf, $nn_data_dir, $update_vocab, undef, $stored_vocab_ref, $tokens_ref);
   unless ($feature_vectors && @$feature_vectors) {
     $pms->{neuralnetwork_prediction} = undef;
     dbg("Not enough tokens found");
