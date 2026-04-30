@@ -696,6 +696,20 @@ sub learn_message {
     $locker->safe_unlock($dataset_path);
     return;
   }
+  # Defer model creation until minimum training corpus is built
+  unless (defined $self->{neural_model}) {
+    my $min_spam = $conf->{neuralnetwork_min_spam_count};
+    my $min_ham  = $conf->{neuralnetwork_min_ham_count};
+    my $vocab = $self->{_last_train_vocab} // {};
+    my $sc = $vocab->{_spam_count} || 0;
+    my $hc = $vocab->{_ham_count}  || 0;
+    if ($sc < $min_spam || $hc < $min_ham) {
+      dbg("Deferring model creation: spam=$sc/$min_spam ham=$hc/$min_ham (vocabulary updated)");
+      $locker->safe_unlock($dataset_path);
+      return 0;
+    }
+  }
+
   # Two-layer hidden sizing: layer1 ~10% of inputs (clamped 32..512),
   # layer2 half of layer1 (min 16).
   my $num_hidden1 = int($num_input / 10);
