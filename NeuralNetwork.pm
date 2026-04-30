@@ -474,7 +474,7 @@ sub _text_to_features {
     if ($train == 0) {
       if ( ($vocabulary{_spam_count} < $min_spam) || ($vocabulary{_ham_count} < $min_ham) ) {
         dbg("Insufficient spam/ham data for prediction: spam=".$vocabulary{_spam_count}.", ham=".$vocabulary{_ham_count});
-        return ([], 0);
+        return ([], 0, []);
       }
     }
 
