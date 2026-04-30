@@ -1900,11 +1900,19 @@ sub _save_model_vocab_to_sql {
       "UPDATE neural_vocabulary SET model_position = NULL WHERE username = ?",
       undef, lc($username)
     );
-    my $sth = $self->{dbh}->prepare(
-      "UPDATE neural_vocabulary SET model_position = ? WHERE username = ? AND keyword = ?"
-    );
+    my $upsert_sql;
+    if ($self->{main}->{conf}->{neuralnetwork_dsn} =~ /^dbi:(?:mysql|MariaDB)/i) {
+      $upsert_sql = "INSERT INTO neural_vocabulary (username, keyword, model_position)
+                     VALUES (?, ?, ?)
+                     ON DUPLICATE KEY UPDATE model_position = VALUES(model_position)";
+    } else {
+      $upsert_sql = "INSERT INTO neural_vocabulary (username, keyword, model_position)
+                     VALUES (?, ?, ?)
+                     ON CONFLICT (username, keyword) DO UPDATE SET model_position = excluded.model_position";
+    }
+    my $sth = $self->{dbh}->prepare($upsert_sql);
     for my $i (0 .. $#$vocab_keys_ref) {
-      $sth->execute($i, lc($username), $vocab_keys_ref->[$i]);
+      $sth->execute(lc($username), $vocab_keys_ref->[$i], $i);
     }
     $self->{dbh}->commit();
     dbg("Saved model vocabulary (" . scalar(@$vocab_keys_ref) . " terms) to SQL for user: $username");
