@@ -1968,10 +1968,10 @@ sub _save_model_vocab {
 sub _load_model_vocab {
   my ($self, $nn_data_dir) = @_;
 
-  my $model_t = $self->{_neural_model_load_time} || 0;
-  if (defined $self->{_model_vocab_cache}
-      && ($self->{_model_vocab_cache_t} || 0) >= $model_t) {
-    return $self->{_model_vocab_cache};
+  my $ttl = $self->{main}->{conf}->{neuralnetwork_cache_ttl} || 0;
+  if ($ttl > 0 && defined $self->{_model_vocab_cache}) {
+    my $age = time() - ($self->{_model_vocab_cache_t} || 0);
+    return $self->{_model_vocab_cache} if $age < $ttl;
   }
 
   my $vocab_ref;
