@@ -397,16 +397,12 @@ sub finish_parsing_end {
   }
 }
 
-# Converts a list of raw text strings into a list of
+# Converts a list of pre-tokenised messages into a list of
 # numerical feature vectors (dense arrays), suitable for Neural Networks training.
 sub _text_to_features {
-    my ($self, $conf, $nn_data_dir, $train, $label, $target_vocab_ref, @emails) = @_;
+    my ($self, $conf, $nn_data_dir, $train, $label, $target_vocab_ref, @token_lists) = @_;
 
-    my $min_word_len = $conf->{neuralnetwork_min_word_len};
-    my $max_word_len = $conf->{neuralnetwork_max_word_len};
     my $vocab_cap    = $conf->{neuralnetwork_vocab_cap};
-    my %stopwords    = map { lc($_) => 1 } split /\s+/, $conf->{neuralnetwork_stopwords};
-    my $stopwords_ref = \%stopwords;
 
     return unless defined $nn_data_dir;
     $nn_data_dir = Mail::SpamAssassin::Util::untaint_file_path($nn_data_dir);
@@ -482,19 +478,12 @@ sub _text_to_features {
       }
     }
 
-    # tokenize helper
-    my $tokenize = sub {
-      my ($text) = @_;
-      return $self->_tokenize_text($conf, $text);
-    };
-
     # When training, build per-document term sets to update doc counts
     my $local_doc_increment = 0;
     if ($train == 1) {
-      foreach my $email_text (@emails) {
-        next unless defined $email_text;
-        my @tokens = $tokenize->($email_text);
-        next unless @tokens;
+      foreach my $tok_ref (@token_lists) {
+        next unless ref($tok_ref) eq 'ARRAY' && @$tok_ref;
+        my @tokens = @$tok_ref;
         $local_doc_increment++;
 
         # count doc-level presence once per unique token
@@ -568,9 +557,9 @@ sub _text_to_features {
 
     # Create TF-IDF vectors and L2-normalize
     my @feature_vectors;
-    foreach my $email_text (@emails) {
-      next unless defined $email_text;
-      my @tokens = $tokenize->($email_text);
+    foreach my $tok_ref (@token_lists) {
+      next unless ref($tok_ref) eq 'ARRAY';
+      my @tokens = @$tok_ref;
       my %tf;
       $tf{$_}++ for @tokens;
       # Build raw tf-idf vector
@@ -647,13 +636,15 @@ sub learn_message {
   }
 
   if(defined $msg) {
-    my $text =  $msg->get_visible_rendered_body_text_array();
-    $text = join("\n", @{$text});
-    if (!defined $text || length($text) < $min_text_len) {
+    my $vis_arr = $msg->get_visible_rendered_body_text_array();
+    my $vis_text = (ref $vis_arr eq 'ARRAY') ? join("\n", @$vis_arr)
+                  : (defined $vis_arr ? $vis_arr : '');
+    if (length($vis_text) < $min_text_len) {
       dbg("Not enough text, skipping neural network processing");
       return;
     }
-    push(@training_data, { label => $isspam, text => $text } );
+    my $tokens_ref = $self->_extract_features_from_message($conf, $msg);
+    push(@training_data, { label => $isspam, tokens => $tokens_ref } );
   }
 
   my $dataset_path = File::Spec->catfile($nn_data_dir, 'fann-' . lc($self->{main}->{username}) . '.model');
@@ -665,8 +656,8 @@ sub learn_message {
     return;
   }
 
-  # Extract the text and labels
-  my @email_texts = map { $_->{text} } @training_data;
+  # Extract the per-message token lists and labels
+  my @email_token_lists = map { $_->{tokens} } @training_data;
   my @labels = map { $_->{label} } @training_data;
 
 
@@ -691,8 +682,8 @@ sub learn_message {
   # Update the vocabulary
   my $update_vocab = 1;
 
-  # Convert email text to numerical feature vectors
-  my ($feature_vectors, $vocab_size, $vocab_keys_ref) = _text_to_features($self, $self->{main}->{conf}, $nn_data_dir, $update_vocab, $isspam, undef, @email_texts);
+  # Convert per-message token lists to numerical feature vectors
+  my ($feature_vectors, $vocab_size, $vocab_keys_ref) = _text_to_features($self, $self->{main}->{conf}, $nn_data_dir, $update_vocab, $isspam, undef, @email_token_lists);
 
   unless ($feature_vectors && @$feature_vectors) {
     $locker->safe_unlock($dataset_path);
@@ -735,7 +726,7 @@ sub learn_message {
       dbg("Vocabulary size changed ($num_input vs model $model_size), rebuilding training vectors with model vocabulary");
       my $stored_vocab_ref = $self->_load_model_vocab($nn_data_dir);
       if (defined $stored_vocab_ref && scalar(@$stored_vocab_ref) == $model_size) {
-        ($feature_vectors, undef) = _text_to_features($self, $self->{main}->{conf}, $nn_data_dir, 2, undef, $stored_vocab_ref, @email_texts);
+        ($feature_vectors, undef) = _text_to_features($self, $self->{main}->{conf}, $nn_data_dir, 2, undef, $stored_vocab_ref, @email_token_lists);
         $vocab_keys_ref = $stored_vocab_ref;
         $num_input = $model_size;
         $network = $existing_network;
@@ -931,15 +922,12 @@ sub forget_message {
     }
 
     # Decrement vocabulary counts for tokens in this message
-    my $text = $msg->get_visible_rendered_body_text_array();
-    $text = join("\n", @{$text}) if defined $text;
+    my $tokens_ref = $self->_extract_features_from_message($conf, $msg);
 
     my $deleted_count = 0;
-    if (defined $text && length($text) > 0) {
-      my @tokens = $self->_tokenize_text($conf, $text);
-      if (@tokens) {
+    if (ref $tokens_ref eq 'ARRAY' && @$tokens_ref) {
         my %token_total;
-        foreach my $t (@tokens) {
+        foreach my $t (@$tokens_ref) {
           $token_total{$t}++;
         }
 
@@ -987,7 +975,6 @@ sub forget_message {
           eval { $self->{dbh}->rollback() if !$self->{dbh}{AutoCommit} };
           dbg("Failed to decrement vocabulary during forget: $err");
         };
-      }
     }
 
     my $del_sql = "
@@ -1295,13 +1282,15 @@ sub _check_neuralnetwork {
   my $spam_threshold = $conf->{neuralnetwork_spam_threshold};
   my $ham_threshold  = $conf->{neuralnetwork_ham_threshold};
 
-  my $email_to_predict = $msg->get_visible_rendered_body_text_array();
-  $email_to_predict = join("\n", @{$email_to_predict});
-  if(!defined $email_to_predict || length($email_to_predict) < $min_text_len) {
+  my $vis_arr = $msg->get_visible_rendered_body_text_array();
+  my $vis_text = (ref $vis_arr eq 'ARRAY') ? join("\n", @$vis_arr)
+                : (defined $vis_arr ? $vis_arr : '');
+  if (length($vis_text) < $min_text_len) {
     $pms->{neuralnetwork_prediction} = undef;
-    dbg("Too short email text $email_to_predict");
+    dbg("Too short email text");
     return;
   }
+  my $tokens_ref = $self->_extract_features_from_message($conf, $msg);
 
   my $nn_data_dir = $self->{main}->{conf}->{neuralnetwork_data_dir};
   $nn_data_dir = Mail::SpamAssassin::Util::untaint_file_path($nn_data_dir);
@@ -1397,7 +1386,7 @@ sub _check_neuralnetwork {
   my $update_vocab = 0;
 
   # Convert email to feature vector using the model's vocabulary
-  my ($feature_vectors, $vocab_size) = _text_to_features($self, $conf, $nn_data_dir, $update_vocab, undef, $stored_vocab_ref, $email_to_predict);
+  my ($feature_vectors, $vocab_size) = _text_to_features($self, $conf, $nn_data_dir, $update_vocab, undef, $stored_vocab_ref, $tokens_ref);
   unless ($feature_vectors && @$feature_vectors) {
     $pms->{neuralnetwork_prediction} = undef;
     dbg("Not enough tokens found");
@@ -1671,6 +1660,123 @@ sub _save_vocabulary_to_sql {
     eval { $self->{dbh}->rollback() if !$self->{dbh}{AutoCommit} };
     dbg("Failed to save vocabulary to SQL: $err");
   };
+}
+
+# Header whitelist used by _extract_features_from_message
+my %_NN_HEADER_PREFIX = (
+  'Subject'      => 'H*sub:',
+  'From'         => 'H*frm:',
+  'Reply-To'     => 'H*rpt:',
+  'Return-Path'  => 'H*rpa:',
+  'To'           => 'H*to:',
+  'Cc'           => 'H*cc:',
+  'Content-Type' => 'H*ct:',
+  'Message-Id'   => 'H*mid:',
+);
+
+sub _tokenize_header_value {
+  my ($prefix, $value) = @_;
+  return () unless defined $value && length $value;
+
+  $value = lc $value;
+  $value =~ s/[\r\n]+/ /g;
+  $value =~ s/"//g;
+  # Keep alphanumerics, dots, @ and dashes inside tokens
+  $value =~ s/[^\p{L}\p{N}\.\@\-_]+/ /g;
+
+  my @out;
+  for my $p (split /\s+/, $value) {
+    my $len = length $p;
+    next if $len < 2 || $len > 80;
+    push @out, $prefix . $p;
+  }
+  return @out;
+}
+
+sub _tokenize_uri {
+  my ($uri) = @_;
+  return () unless defined $uri && length $uri;
+
+  $uri = lc $uri;
+  my @out;
+  my $capped = length($uri) > 80 ? substr($uri, 0, 80) : $uri;
+  push @out, 'U*:' . $capped;
+
+  if ($uri =~ m{(?:[a-z][a-z0-9+\-.]*:)?//([^/\s\?\#]+)}) {
+    my $host = $1;
+    $host =~ s/^[^\@]*\@//;  # strip user-info
+    $host =~ s/:\d+$//;       # strip port
+    if (length $host) {
+      push @out, 'D*:' . $host;
+      if ($host =~ /([^.]+\.[^.]+)$/) {
+        push @out, 'D*:' . $1;
+      }
+    }
+  }
+  return @out;
+}
+
+sub _extract_uris_from_msg {
+  my ($msg) = @_;
+  return () unless defined $msg;
+  my $body = eval { $msg->get_pristine_body() };
+  return () unless defined $body;
+  $body = join("\n", @$body) if ref $body eq 'ARRAY';
+  my @uris;
+  while ($body =~ m{((?:https?|ftp)://[^\s<>"'()\[\]\\]+)}gi) {
+    my $u = $1;
+    $u =~ s/[\.,;:!?]+$//;
+    push @uris, $u if length $u;
+  }
+  return @uris;
+}
+
+# Build a flat list of prefixed tokens drawn from the visible body, the
+# invisible (HTML-hidden) body, a small whitelist of headers, the URIs in
+# the message, and the MIME-part digests.
+sub _extract_features_from_message {
+  my ($self, $conf, $msg) = @_;
+  my @tokens;
+  return \@tokens unless defined $msg;
+
+  my $vis_arr = $msg->get_visible_rendered_body_text_array();
+  if (ref $vis_arr eq 'ARRAY' && @$vis_arr) {
+    push @tokens, $self->_tokenize_text($conf, join("\n", @$vis_arr));
+  }
+
+  my $inv_arr = eval { $msg->get_invisible_rendered_body_text_array() };
+  if (ref $inv_arr eq 'ARRAY' && @$inv_arr) {
+    my @inv_tok = $self->_tokenize_text($conf, join("\n", @$inv_arr));
+    push @tokens, map { 'I*:' . $_ } @inv_tok;
+  }
+
+  for my $h (sort keys %_NN_HEADER_PREFIX) {
+    my $val = eval { $msg->get_pristine_header($h) };
+    next unless defined $val;
+    push @tokens, _tokenize_header_value($_NN_HEADER_PREFIX{$h}, $val);
+  }
+
+  my $rcv = eval { $msg->get_pristine_header('Received') };
+  if (defined $rcv && length $rcv) {
+    my @lines = split /\n(?!\s)/, $rcv;
+    push @tokens, _tokenize_header_value('H*rcv:', $lines[-1]) if @lines;
+  }
+
+  for my $u (_extract_uris_from_msg($msg)) {
+    push @tokens, _tokenize_uri($u);
+  }
+
+  my $mp = eval { $msg->get_mimepart_digests() };
+  if (ref $mp eq 'ARRAY') {
+    for my $d (@$mp) {
+      next unless defined $d && length $d;
+      my $t = lc $d;
+      $t = substr($t, 0, 80) if length $t > 80;
+      push @tokens, 'M*:' . $t;
+    }
+  }
+
+  return \@tokens;
 }
 
 sub _tokenize_text {
