@@ -737,15 +737,14 @@ sub learn_message {
       if (defined $stored_vocab_ref && scalar(@$stored_vocab_ref) == $model_size) {
         ($feature_vectors, undef) = _text_to_features($self, $self->{main}->{conf}, $nn_data_dir, 2, undef, $stored_vocab_ref, @email_texts);
         $vocab_keys_ref = $stored_vocab_ref;
+        $num_input = $model_size;
+        $network = $existing_network;
       } else {
-        dbg("Model vocabulary file not found or mismatched, falling back to vector adjustment");
-        $feature_vectors = [ map { my $v = _adjust_vector_size($_->{vec}, $model_size); { vec => $v, hits => scalar grep { $_ != 0 } @$v } } @$feature_vectors ];
-        $vocab_keys_ref = undef;
+        dbg("Model vocabulary mismatch, rebuilding model with current vocabulary ($num_input terms)");
       }
-      $num_input = $model_size;
-      $network = $existing_network;
-    } else {
-      # No existing model: create a baseline from vocabulary statistics
+    }
+    unless (defined $network) {
+      # No existing model or inconsistent model, create a baseline from vocabulary
       $network = $self->_retrain_from_vocabulary($self->{main}->{conf}, $nn_data_dir, $num_input);
       if (!defined $network) {
         # No vocabulary stats available yet, create a fresh network
@@ -935,6 +934,7 @@ sub forget_message {
     my $text = $msg->get_visible_rendered_body_text_array();
     $text = join("\n", @{$text}) if defined $text;
 
+    my $deleted_count = 0;
     if (defined $text && length($text) > 0) {
       my @tokens = $self->_tokenize_text($conf, $text);
       if (@tokens) {
@@ -977,6 +977,7 @@ sub forget_message {
           ";
           my $sth_cleanup = $self->{dbh}->prepare($cleanup_sql);
           $sth_cleanup->execute(lc($username));
+          $deleted_count = $sth_cleanup->rows();
 
           $self->{dbh}->commit();
           dbg("Decremented vocabulary counts for message $msgid");
@@ -1008,6 +1009,54 @@ sub forget_message {
     if (defined $self->{_file_vocab_cache}) {
       delete $self->{_file_vocab_cache}{$lc_user};
       delete $self->{_file_vocab_cache_time}{$lc_user};
+    }
+
+    # Vocabulary terms were removed, retrain so the model stays consistent
+    if ($deleted_count > 0) {
+      my $nn_data_dir  = Mail::SpamAssassin::Util::untaint_file_path($conf->{neuralnetwork_data_dir});
+      my $dataset_path = File::Spec->catfile($nn_data_dir, 'fann-' . $lc_user . '.model');
+      if (-d $nn_data_dir && -f $dataset_path) {
+        my $full_vocab_ref  = $self->_load_vocabulary_from_sql($username);
+        my $full_terms      = ref($full_vocab_ref) eq 'HASH' ? ($full_vocab_ref->{terms} || {}) : {};
+        my $full_vocab_size = scalar keys %$full_terms;
+        if ($full_vocab_size > 0) {
+          my $locker   = $self->{main}->{locker};
+          my $got_lock = eval { $locker->safe_lock($dataset_path, $conf->{neuralnetwork_lock_timeout}); 1 };
+          my $rebuilt  = eval { $self->_retrain_from_vocabulary($conf, $nn_data_dir, $full_vocab_size) };
+          if ($rebuilt) {
+            my $file_mode = 0666 & ~umask();
+            eval {
+              my ($vol, $dir) = File::Spec->splitpath($dataset_path);
+              my $tmp_dir = File::Spec->catpath($vol, $dir, '');
+              my (undef, $tmp_path) = File::Temp::tempfile(
+                'fann-XXXXXX', DIR => $tmp_dir, SUFFIX => '.tmp', UNLINK => 0);
+              chmod($file_mode, $tmp_path) or info("chmod $file_mode on '$tmp_path' failed: $!");
+              if ($rebuilt->save($tmp_path)) {
+                rename($tmp_path, $dataset_path) or die "rename failed: $!";
+              } else {
+                unlink $tmp_path;
+                die "save failed";
+              }
+              1;
+            } or do {
+              info("NeuralNetwork: Could not persist retrained model after forget: " . ($@ || 'unknown'));
+            };
+            my $new_vocab_keys = [ sort keys %$full_terms ];
+            if (defined $conf->{neuralnetwork_dsn} && $self->{dbh}) {
+              $self->_save_model_vocab_to_sql($new_vocab_keys);
+            } else {
+              $self->_save_model_vocab($new_vocab_keys, $nn_data_dir);
+            }
+            $self->{neural_model}            = $rebuilt;
+            $self->{_neural_model_load_time} = time();
+            delete $self->{_model_vocab_cache};
+            info("NeuralNetwork: Retrained model with $full_vocab_size vocabulary terms after forget");
+          } else {
+            dbg("NeuralNetwork: Retrain after forget failed");
+          }
+          $locker->safe_unlock($dataset_path) if $got_lock;
+        }
+      }
     }
 
     $self->{forgetting} = undef;
