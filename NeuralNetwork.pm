@@ -705,6 +705,10 @@ sub learn_message {
     my $hc = $vocab->{_ham_count}  || 0;
     if ($sc < $min_spam || $hc < $min_ham) {
       dbg("Deferring model creation: spam=$sc/$min_spam ham=$hc/$min_ham (vocabulary updated)");
+      # Record message as learned to prevent re-learning.
+      if (defined $msg && defined $msgid && length($msgid) > 0) {
+        $self->_save_msgid_to_neural_seen($msgid, $isspam);
+      }
       $locker->safe_unlock($dataset_path);
       return 0;
     }
