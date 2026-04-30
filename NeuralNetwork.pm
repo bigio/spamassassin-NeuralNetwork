@@ -1328,6 +1328,9 @@ sub _check_neuralnetwork {
   my $model_mtime   = (stat($dataset_path))[9] // 0;
   my $model_changed = $model_mtime > ($self->{_neural_model_load_time} // 0);
 
+  my $locker = $self->{main}->{locker};
+  my $network;
+
   if (!defined $self->{neural_model} || $model_expired || $model_changed) {
     if ($model_expired) {
       dbg("Model cache expired (age: ${model_age}s, ttl: ${ttl}s), reloading");
@@ -1335,7 +1338,6 @@ sub _check_neuralnetwork {
       dbg("Model file changed on disk, reloading");
     }
 
-    my $locker = $self->{main}->{locker};
     my $got_lock = 0;
     eval {
       $got_lock = $locker->safe_lock($dataset_path,
@@ -1345,7 +1347,8 @@ sub _check_neuralnetwork {
 
     my $file_mode = 0666 & ~umask();
     eval {
-      $self->{neural_model} = AI::FANN->new_from_file($dataset_path);
+      my $loaded = AI::FANN->new_from_file($dataset_path);
+      $self->{neural_model}           = $loaded;
       $self->{_neural_model_load_time} = time();
       1;
     } or do {
@@ -1390,9 +1393,15 @@ sub _check_neuralnetwork {
       }
     };
 
+    $network = $self->{neural_model};
     $locker->safe_unlock($dataset_path) if $got_lock;
+  } else {
+    my $got_snap_lock = 0;
+    eval { $got_snap_lock = $locker->safe_lock($dataset_path,
+        $self->{main}->{conf}->{neuralnetwork_lock_timeout}); 1 };
+    $network = $self->{neural_model};
+    $locker->safe_unlock($dataset_path) if $got_snap_lock;
   }
-  my $network = $self->{neural_model};
 
   my $stored_vocab_ref = $self->_load_model_vocab($nn_data_dir);
 
