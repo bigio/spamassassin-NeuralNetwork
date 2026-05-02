@@ -83,6 +83,7 @@ sub new {
   $self->set_config($mailsa->{conf});
   $self->register_eval_rule("check_neuralnetwork_spam", $Mail::SpamAssassin::Conf::TYPE_BODY_EVALS);
   $self->register_eval_rule("check_neuralnetwork_ham", $Mail::SpamAssassin::Conf::TYPE_BODY_EVALS);
+  $self->register_eval_rule("check_neuralnetwork", $Mail::SpamAssassin::Conf::TYPE_BODY_EVALS);
 
   return $self;
 }
@@ -204,6 +205,44 @@ SQLite.
 
 Minimum number of tokens in the email that must exist in the vocabulary for
 prediction to run.
+
+=back
+
+=head1 EVAL RULES
+
+=over 4
+
+=item check_neuralnetwork_spam()
+
+Body eval rule. Returns true when the neural network prediction score exceeds
+C<neuralnetwork_spam_threshold> (default 0.6). Used by the built-in C<NN_SPAM>
+rule (score +1.0).
+
+=item check_neuralnetwork_ham()
+
+Body eval rule. Returns true when the neural network prediction score is below
+C<neuralnetwork_ham_threshold> (default 0.4). Used by the built-in C<NN_HAM>
+rule (score -1.0).
+
+=item check_neuralnetwork(low, high)
+
+Body eval rule accepting two optional floating-point arguments. Returns true
+when the raw prediction score falls within the inclusive range C<[low, high]>.
+Defaults: C<low = 0.0>, C<high = 1.0>.
+
+Use this rule to define finer-grained confidence tiers.
+
+  body      NN_CONFIDENT_SPAM  eval:check_neuralnetwork(0.75, 1.0)
+  describe  NN_CONFIDENT_SPAM  Email classified as spam with high confidence by Neural Network
+  score     NN_CONFIDENT_SPAM  2.0
+
+  body      NN_PROBABLE_SPAM   eval:check_neuralnetwork(0.55, 0.75)
+  describe  NN_PROBABLE_SPAM   Email classified as probable spam by Neural Network
+  score     NN_PROBABLE_SPAM   1.0
+
+  body      NN_PROBABLE_HAM    eval:check_neuralnetwork(0.0, 0.4)
+  describe  NN_PROBABLE_HAM    Email classified as ham by Neural Network
+  score     NN_PROBABLE_HAM    -1.0
 
 =back
 
@@ -1082,6 +1121,15 @@ sub check_neuralnetwork_ham {
 
   _check_neuralnetwork($self, $pms);
   return $pms->{neuralnetwork_ham};
+}
+
+sub check_neuralnetwork {
+  my ($self, $pms, $low, $high) = @_;
+
+  _check_neuralnetwork($self, $pms);
+  my $pred = $pms->{neuralnetwork_prediction};
+  return 0 unless defined $pred;
+  return ($pred >= $low && $pred <= $high) ? 1 : 0;
 }
 
 # Compute chi-squared score measuring how discriminative a vocabulary term

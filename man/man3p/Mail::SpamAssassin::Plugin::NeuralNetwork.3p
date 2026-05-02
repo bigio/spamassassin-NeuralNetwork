@@ -58,7 +58,7 @@
 .\" ========================================================================
 .\"
 .IX Title "NeuralNetwork 3"
-.TH NeuralNetwork 3 2026-04-28 "perl v5.42.2" "User Contributed Perl Documentation"
+.TH NeuralNetwork 3 2026-05-01 "perl v5.42.2" "User Contributed Perl Documentation"
 .\" For nroff, turn off justification.  Always turn off hyphenation; it makes
 .\" way too many mistakes in technical documents.
 .if n .ad l
@@ -171,3 +171,37 @@ SQLite.
 .IX Item "neuralnetwork_min_vocab_hits n (default: 10)"
 Minimum number of tokens in the email that must exist in the vocabulary for
 prediction to run.
+.SH "EVAL RULES"
+.IX Header "EVAL RULES"
+.IP \fBcheck_neuralnetwork_spam()\fR 4
+.IX Item "check_neuralnetwork_spam()"
+Body eval rule. Returns true when the neural network prediction score exceeds
+\&\f(CW\*(C`neuralnetwork_spam_threshold\*(C'\fR (default 0.6). Used by the built\-in \f(CW\*(C`NN_SPAM\*(C'\fR
+rule (score +1.0).
+.IP \fBcheck_neuralnetwork_ham()\fR 4
+.IX Item "check_neuralnetwork_ham()"
+Body eval rule. Returns true when the neural network prediction score is below
+\&\f(CW\*(C`neuralnetwork_ham_threshold\*(C'\fR (default 0.4). Used by the built\-in \f(CW\*(C`NN_HAM\*(C'\fR
+rule (score \-1.0).
+.IP "check_neuralnetwork(low, high)" 4
+.IX Item "check_neuralnetwork(low, high)"
+Body eval rule accepting two optional floating\-point arguments. Returns true
+when the raw prediction score falls within the inclusive range \f(CW\*(C`[low, high]\*(C'\fR.
+Defaults: \f(CW\*(C`low = 0.0\*(C'\fR, \f(CW\*(C`high = 1.0\*(C'\fR.
+.Sp
+Use this rule to define finer\-grained confidence tiers. Multiple rules can
+coexist. Example:
+.Sp
+.Vb 3
+\&  body      NN_CONFIDENT_SPAM  eval:check_neuralnetwork(0.75, 1.0)
+\&  describe  NN_CONFIDENT_SPAM  Email classified as spam with high confidence by Neural Network
+\&  score     NN_CONFIDENT_SPAM  2.0
+\&
+\&  body      NN_PROBABLE_SPAM   eval:check_neuralnetwork(0.55, 0.75)
+\&  describe  NN_PROBABLE_SPAM   Email classified as probable spam by Neural Network
+\&  score     NN_PROBABLE_SPAM   1.0
+\&
+\&  body      NN_PROBABLE_HAM    eval:check_neuralnetwork(0.0, 0.4)
+\&  describe  NN_PROBABLE_HAM    Email classified as ham by Neural Network
+\&  score     NN_PROBABLE_HAM    \-1.0
+.Ve
