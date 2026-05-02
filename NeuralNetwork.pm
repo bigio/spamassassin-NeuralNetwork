@@ -1854,6 +1854,33 @@ sub _extract_features_from_message {
   return \@tokens;
 }
 
+my %_HTML_ENTITIES = (
+  # core XML/HTML escapes
+  amp   => '&',   lt    => '<',   gt    => '>',
+  quot  => '"',   apos  => "'",   nbsp  => ' ',
+  # symbols
+  euro  => 'eur', pound => 'gbp', yen   => 'jpy',
+  cent  => 'cent', curren => ' ',
+  # dashes and quotation marks
+  mdash => '-',   ndash => '-',   minus => '-',   horbar => '-',
+  laquo => ' ',   raquo => ' ',
+  ldquo => '"',   rdquo => '"',   bdquo => '"',
+  lsquo => "'",   rsquo => "'",   sbquo => "'",
+  # other punctuation / typography
+  hellip => '...',
+  # accented letters
+  agrave => 'a',  aacute => 'a',  acirc  => 'a',  atilde => 'a',
+  auml   => 'a',  aring  => 'a',  aelig  => 'ae',
+  egrave => 'e',  eacute => 'e',  ecirc  => 'e',  euml   => 'e',
+  igrave => 'i',  iacute => 'i',  icirc  => 'i',  iuml   => 'i',
+  ograve => 'o',  oacute => 'o',  ocirc  => 'o',  otilde => 'o',
+  ouml   => 'o',  oslash => 'o',  oelig  => 'oe',
+  ugrave => 'u',  uacute => 'u',  ucirc  => 'u',  uuml   => 'u',
+  yacute => 'y',  yuml   => 'y',
+  ntilde => 'n',  ccedil => 'c',  szlig  => 'ss',
+  eth    => 'd',  thorn  => 'th',
+);
+
 sub _tokenize_text {
   my ($self, $conf, $text) = @_;
   return () unless defined $text;
@@ -1873,8 +1900,11 @@ sub _tokenize_text {
   $text =~ s/\-{2,}//g;
   # Remove tokens that could be a date
   $text =~ s/\b\d+(?:\-|\/)\d+(?:\-|\/)\d+\b//g;
-  # replace HTML entities and punctuation with spaces
-  $text =~ s/&[a-z#0-9]+;/ /g;
+  # Decode HTML entities to their text equivalents, then strip residue
+  $text =~ s/&([a-zA-Z]+);/exists $_HTML_ENTITIES{lc $1} ? $_HTML_ENTITIES{lc $1} : ' '/ge;
+  $text =~ s/&#x([0-9a-fA-F]{1,6});/chr(hex($1))/ge;
+  $text =~ s/&#([0-9]{1,7});/chr($1)/ge;
+  $text =~ s/&/ /g;
   $text =~ s{[^\p{L}\p{N}\-]}{ }g;
   my @tokens = grep { length($_) >= $min_word_len && length($_) <= $max_word_len } split /\s+/, $text;
   @tokens = grep { $_ !~ /^\d+$/ } @tokens;         # drop pure numbers
