@@ -1065,7 +1065,8 @@ sub forget_message {
         my $full_vocab_size = scalar keys %$full_terms;
         if ($full_vocab_size > 0) {
           my $locker   = $self->{main}->{locker};
-          my $got_lock = eval { $locker->safe_lock($dataset_path, $conf->{neuralnetwork_lock_timeout}); 1 };
+          my $got_lock = 0;
+          eval { $got_lock = $locker->safe_lock($dataset_path, $conf->{neuralnetwork_lock_timeout}); 1 };
           my $rebuilt  = eval { $self->_retrain_from_vocabulary($conf, $nn_data_dir, $full_vocab_size) };
           if ($rebuilt) {
             my $file_mode = 0666 & ~umask();
@@ -1448,11 +1449,7 @@ sub _check_neuralnetwork {
     $network = $self->{neural_model};
     $locker->safe_unlock($dataset_path) if $got_lock;
   } else {
-    my $got_snap_lock = 0;
-    eval { $got_snap_lock = $locker->safe_lock($dataset_path,
-        $self->{main}->{conf}->{neuralnetwork_lock_timeout}); 1 };
     $network = $self->{neural_model};
-    $locker->safe_unlock($dataset_path) if $got_snap_lock;
   }
 
   my $stored_vocab_ref = $self->_load_model_vocab($nn_data_dir);
