@@ -920,6 +920,7 @@ sub learn_message {
       SUFFIX => '.tmp',
       UNLINK => 0,
     );
+    $tmp_path = Mail::SpamAssassin::Util::untaint_file_path($tmp_path);
     chmod($file_mode, $tmp_path) or info("chmod $file_mode on '$tmp_path' failed: $!");
     $network->save($tmp_path) or die "model save to temp '$tmp_path' failed";
 
@@ -1075,6 +1076,7 @@ sub forget_message {
               my $tmp_dir = File::Spec->catpath($vol, $dir, '');
               my (undef, $tmp_path) = File::Temp::tempfile(
                 'fann-XXXXXX', DIR => $tmp_dir, SUFFIX => '.tmp', UNLINK => 0);
+              $tmp_path = Mail::SpamAssassin::Util::untaint_file_path($tmp_path);
               chmod($file_mode, $tmp_path) or info("chmod $file_mode on '$tmp_path' failed: $!");
               if ($rebuilt->save($tmp_path)) {
                 rename($tmp_path, $dataset_path) or die "rename failed: $!";
@@ -1429,6 +1431,7 @@ sub _check_neuralnetwork {
           my $tmp_dir = File::Spec->catpath($vol, $dir, '');
           my (undef, $tmp_path) = File::Temp::tempfile(
             'fann-XXXXXX', DIR => $tmp_dir, SUFFIX => '.tmp', UNLINK => 0);
+          $tmp_path = Mail::SpamAssassin::Util::untaint_file_path($tmp_path);  
           chmod($file_mode, $tmp_path) or info("chmod $file_mode on '$tmp_path' failed: $!");
           if ($rebuilt->save($tmp_path)) {
             rename($tmp_path, $dataset_path)
