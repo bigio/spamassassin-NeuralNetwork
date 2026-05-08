@@ -753,6 +753,10 @@ sub learn_message {
     }
   }
 
+  # Drop the lock and re-acquire it later
+  my $lock1_mtime = (stat($dataset_path))[9];
+  $locker->safe_unlock($dataset_path);
+
   # Two-layer hidden sizing: layer1 ~10% of inputs (clamped 32..512),
   # layer2 half of layer1 (min 16).
   my $num_hidden1 = int($num_input / 10);
@@ -848,11 +852,8 @@ sub learn_message {
     dbg("Skipping RPROP replay: vocab_keys unavailable");
   }
 
-  # drop the lock and re-acquire it later
   my $locked_num_input      = $num_input;
   my $locked_vocab_keys_ref = $vocab_keys_ref;
-  my $lock1_mtime           = (stat($dataset_path))[9];
-  $locker->safe_unlock($dataset_path);
 
   for my $e (1 .. $weighted_epochs) {
     for my $i (0 .. $#$feature_vectors) {
@@ -1065,43 +1066,47 @@ sub forget_message {
         my $full_terms      = ref($full_vocab_ref) eq 'HASH' ? ($full_vocab_ref->{terms} || {}) : {};
         my $full_vocab_size = scalar keys %$full_terms;
         if ($full_vocab_size > 0) {
-          my $locker   = $self->{main}->{locker};
-          my $got_lock = 0;
-          eval { $got_lock = $locker->safe_lock($dataset_path, $conf->{neuralnetwork_lock_timeout}); 1 };
-          my $rebuilt  = eval { $self->_retrain_from_vocabulary($conf, $nn_data_dir, $full_vocab_size) };
-          if ($rebuilt) {
-            my $file_mode = 0666 & ~umask();
-            eval {
-              my ($vol, $dir) = File::Spec->splitpath($dataset_path);
-              my $tmp_dir = File::Spec->catpath($vol, $dir, '');
-              my (undef, $tmp_path) = File::Temp::tempfile(
-                'fann-XXXXXX', DIR => $tmp_dir, SUFFIX => '.tmp', UNLINK => 0);
-              $tmp_path = Mail::SpamAssassin::Util::untaint_file_path($tmp_path);
-              chmod($file_mode, $tmp_path) or info("chmod $file_mode on '$tmp_path' failed: $!");
-              if ($rebuilt->save($tmp_path)) {
-                rename($tmp_path, $dataset_path) or die "rename failed: $!";
-              } else {
-                unlink $tmp_path;
-                die "save failed";
-              }
-              1;
-            } or do {
-              info("NeuralNetwork: Could not persist retrained model after forget: " . ($@ || 'unknown'));
-            };
-            my $new_vocab_keys = [ sort keys %$full_terms ];
-            if (defined $conf->{neuralnetwork_dsn} && $self->{dbh}) {
-              $self->_save_model_vocab_to_sql($new_vocab_keys);
-            } else {
-              $self->_save_model_vocab($new_vocab_keys, $nn_data_dir);
-            }
-            $self->{neural_model}            = $rebuilt;
-            $self->{_neural_model_load_time} = time();
-            delete $self->{_model_vocab_cache};
-            info("NeuralNetwork: Retrained model with $full_vocab_size vocabulary terms after forget");
+          my $rebuilt = eval { $self->_retrain_from_vocabulary($conf, $nn_data_dir, $full_vocab_size) };
+          if (!$rebuilt) {
+            dbg("NeuralNetwork: Retrain after forget failed: " . ($@ || 'undef'));
           } else {
-            dbg("NeuralNetwork: Retrain after forget failed");
+            my $locker   = $self->{main}->{locker};
+            my $got_lock = 0;
+            eval { $got_lock = $locker->safe_lock($dataset_path, $conf->{neuralnetwork_lock_timeout}); 1 };
+            if (!$got_lock) {
+              info("NeuralNetwork: Cannot acquire lock for save after forget; in-memory model not persisted");
+            } else {
+              my $file_mode = 0666 & ~umask();
+              eval {
+                my ($vol, $dir) = File::Spec->splitpath($dataset_path);
+                my $tmp_dir = File::Spec->catpath($vol, $dir, '');
+                my (undef, $tmp_path) = File::Temp::tempfile(
+                  'fann-XXXXXX', DIR => $tmp_dir, SUFFIX => '.tmp', UNLINK => 0);
+                $tmp_path = Mail::SpamAssassin::Util::untaint_file_path($tmp_path);
+                chmod($file_mode, $tmp_path) or info("chmod $file_mode on '$tmp_path' failed: $!");
+                if ($rebuilt->save($tmp_path)) {
+                  rename($tmp_path, $dataset_path) or die "rename failed: $!";
+                } else {
+                  unlink $tmp_path;
+                  die "save failed";
+                }
+                1;
+              } or do {
+                info("NeuralNetwork: Could not persist retrained model after forget: " . ($@ || 'unknown'));
+              };
+              my $new_vocab_keys = [ sort keys %$full_terms ];
+              if (defined $conf->{neuralnetwork_dsn} && $self->{dbh}) {
+                $self->_save_model_vocab_to_sql($new_vocab_keys);
+              } else {
+                $self->_save_model_vocab($new_vocab_keys, $nn_data_dir);
+              }
+              $self->{neural_model}            = $rebuilt;
+              $self->{_neural_model_load_time} = time();
+              delete $self->{_model_vocab_cache};
+              info("NeuralNetwork: Retrained model with $full_vocab_size vocabulary terms after forget");
+              $locker->safe_unlock($dataset_path);
+            }
           }
-          $locker->safe_unlock($dataset_path) if $got_lock;
         }
       }
     }
@@ -1393,64 +1398,68 @@ sub _check_neuralnetwork {
       dbg("Model file changed on disk, reloading");
     }
 
-    my $got_lock = 0;
-    eval {
-      $got_lock = $locker->safe_lock($dataset_path,
-        $self->{main}->{conf}->{neuralnetwork_lock_timeout});
-      1;
-    };
-
     my $file_mode = 0666 & ~umask();
-    eval {
-      my $loaded = AI::FANN->new_from_file($dataset_path);
-      $self->{neural_model}           = $loaded;
+
+    my $loaded = eval { AI::FANN->new_from_file($dataset_path) };
+    if ($loaded) {
+      $self->{neural_model}            = $loaded;
       $self->{_neural_model_load_time} = time();
-      1;
-    } or do {
+      $network = $loaded;
+    } else {
       my $err = $@ || 'unknown';
       my @stat = stat($dataset_path);
       my $fsize = @stat ? $stat[7] : 'N/A';
       dbg("Failed to load model for prediction: $err "
         . "(path=$dataset_path, size=${fsize}B), attempting vocabulary rebuild");
 
-      # rebuild an in-memory model from vocabulary statistics
       undef $self->{neural_model};
-      my $rebuild_vocab_ref  = $self->_load_model_vocab($nn_data_dir);
-      my $rebuild_vocab_size = (defined $rebuild_vocab_ref && @$rebuild_vocab_ref)
-        ? scalar(@$rebuild_vocab_ref) : 0;
-      my $rebuilt = eval {
-        $self->_retrain_from_vocabulary($conf, $nn_data_dir, $rebuild_vocab_size);
-      };
-      if ($rebuilt) {
-        dbg("Vocabulary rebuild succeeded");
-        $self->{neural_model} = $rebuilt;
-        $self->{_neural_model_load_time} = time();
-        # Persist the rebuilt model
-        eval {
-          my ($vol, $dir) = File::Spec->splitpath($dataset_path);
-          my $tmp_dir = File::Spec->catpath($vol, $dir, '');
-          my (undef, $tmp_path) = File::Temp::tempfile(
-            'fann-XXXXXX', DIR => $tmp_dir, SUFFIX => '.tmp', UNLINK => 0);
-          $tmp_path = Mail::SpamAssassin::Util::untaint_file_path($tmp_path);
-          chmod($file_mode, $tmp_path) or info("chmod $file_mode on '$tmp_path' failed: $!");
-          if ($rebuilt->save($tmp_path)) {
-            rename($tmp_path, $dataset_path)
-              or die "rename failed: $!";
-            dbg("Persisted rebuilt model to '$dataset_path'");
-          } else {
-            unlink $tmp_path;
-          }
-          1;
-        } or dbg("Could not persist rebuilt model: " . ($@ || 'unknown'));
-      } else {
-        dbg("Vocabulary rebuild failed");
-        $locker->safe_unlock($dataset_path) if $got_lock;
+
+      # skip prediction if we cannot acquire the lock fast enough
+      my $got_lock = 0;
+      eval { $got_lock = $locker->safe_lock($dataset_path, 1); 1; };
+      if (!$got_lock) {
+        dbg("another worker is rebuilding the model; skipping prediction");
         return;
       }
-    };
 
-    $network = $self->{neural_model};
-    $locker->safe_unlock($dataset_path) if $got_lock;
+      my $rebuilt;
+      eval {
+        my $vref = $self->_load_model_vocab($nn_data_dir);
+        my $vsz  = (defined $vref && @$vref) ? scalar(@$vref) : 0;
+        $rebuilt = $self->_retrain_from_vocabulary($conf, $nn_data_dir, $vsz);
+        1;
+      } or dbg("Vocabulary rebuild failed: " . ($@ || 'unknown'));
+
+      if (!$rebuilt) {
+        dbg("Vocabulary rebuild failed");
+        $locker->safe_unlock($dataset_path);
+        return;
+      }
+
+      dbg("Vocabulary rebuild succeeded");
+      $self->{neural_model}            = $rebuilt;
+      $self->{_neural_model_load_time} = time();
+
+      eval {
+        my ($vol, $dir) = File::Spec->splitpath($dataset_path);
+        my $tmp_dir = File::Spec->catpath($vol, $dir, '');
+        my (undef, $tmp_path) = File::Temp::tempfile(
+          'fann-XXXXXX', DIR => $tmp_dir, SUFFIX => '.tmp', UNLINK => 0);
+        $tmp_path = Mail::SpamAssassin::Util::untaint_file_path($tmp_path);
+        chmod($file_mode, $tmp_path) or info("chmod $file_mode on '$tmp_path' failed: $!");
+        if ($rebuilt->save($tmp_path)) {
+          rename($tmp_path, $dataset_path)
+            or die "rename failed: $!";
+          dbg("Persisted rebuilt model to '$dataset_path'");
+        } else {
+          unlink $tmp_path;
+        }
+        1;
+      } or dbg("Could not persist rebuilt model: " . ($@ || 'unknown'));
+
+      $locker->safe_unlock($dataset_path);
+      $network = $rebuilt;
+    }
   } else {
     $network = $self->{neural_model};
   }
