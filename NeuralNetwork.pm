@@ -1952,6 +1952,38 @@ sub _load_vocabulary_from_sql {
   );
 
   eval {
+    my $meta_sth = $self->{dbh}->prepare(
+      "SELECT COUNT(*),
+              SUM(CASE WHEN flag = 'S' THEN 1 ELSE 0 END),
+              SUM(CASE WHEN flag = 'H' THEN 1 ELSE 0 END)
+       FROM neural_seen WHERE username = ?"
+    );
+    $meta_sth->execute($username);
+    my $meta = $meta_sth->fetchrow_arrayref();
+    if ($meta) {
+      $vocabulary{_doc_count}  = $meta->[0] || 0;
+      $vocabulary{_spam_count} = $meta->[1] || 0;
+      $vocabulary{_ham_count}  = $meta->[2] || 0;
+    }
+    1;
+  } or do {
+    dbg("Pre-check query failed: " . ($@ || 'unknown'));
+  };
+
+  my $conf     = $self->{main}->{conf};
+  my $min_spam = $conf->{neuralnetwork_min_spam_count};
+  my $min_ham  = $conf->{neuralnetwork_min_ham_count};
+
+  if ($vocabulary{_spam_count} < $min_spam || $vocabulary{_ham_count} < $min_ham) {
+    dbg("Pre-check: insufficient training data " .
+        "(spam=$vocabulary{_spam_count}/$min_spam, ham=$vocabulary{_ham_count}/$min_ham)" .
+        ", skipping full vocabulary load");
+    $self->{_vocab_cache}{$username}      = \%vocabulary;
+    $self->{_vocab_cache_time}{$username} = time();
+    return \%vocabulary;
+  }
+
+  eval {
     my $sth = $self->{dbh}->prepare("
       SELECT keyword, total_count, docs_count, spam_count, ham_count
       FROM neural_vocabulary
@@ -1971,21 +2003,6 @@ sub _load_vocabulary_from_sql {
         ham   => $ham
       };
       $count++;
-    }
-
-    my $meta_sth = $self->{dbh}->prepare("
-      SELECT COUNT(*),
-             SUM(CASE WHEN flag = 'S' THEN 1 ELSE 0 END),
-             SUM(CASE WHEN flag = 'H' THEN 1 ELSE 0 END)
-      FROM neural_seen
-      WHERE username = ?
-    ");
-    $meta_sth->execute($username);
-    my $meta = $meta_sth->fetchrow_arrayref();
-    if ($meta) {
-      $vocabulary{_doc_count}  = $meta->[0] || 0;
-      $vocabulary{_spam_count} = $meta->[1] || 0;
-      $vocabulary{_ham_count}  = $meta->[2] || 0;
     }
 
     dbg("Loaded $count vocabulary terms from SQL for user: $username " .
