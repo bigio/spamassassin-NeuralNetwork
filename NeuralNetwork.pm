@@ -682,7 +682,7 @@ sub learn_message {
       dbg("Not enough text, skipping neural network processing");
       return;
     }
-    my $tokens_ref = $self->_extract_features_from_message($conf, $msg);
+    my $tokens_ref = $self->_extract_features_from_message($pms, $conf, $msg);
     push(@training_data, { label => $isspam, tokens => $tokens_ref } );
   }
 
@@ -981,7 +981,7 @@ sub forget_message {
     }
 
     # Decrement vocabulary counts for tokens in this message
-    my $tokens_ref = $self->_extract_features_from_message($conf, $msg);
+    my $tokens_ref = $self->_extract_features_from_message(undef, $conf, $msg);
 
     my $deleted_count = 0;
     if (ref $tokens_ref eq 'ARRAY' && @$tokens_ref) {
@@ -1364,7 +1364,7 @@ sub _check_neuralnetwork {
     dbg("Too short email text");
     return;
   }
-  my $tokens_ref = $self->_extract_features_from_message($conf, $msg);
+  my $tokens_ref = $self->_extract_features_from_message($pms, $conf, $msg);
 
   my $nn_data_dir = $self->{main}->{conf}->{neuralnetwork_data_dir};
   $nn_data_dir = Mail::SpamAssassin::Util::untaint_file_path($nn_data_dir);
@@ -1801,16 +1801,15 @@ sub _tokenize_uri {
 }
 
 sub _extract_uris_from_msg {
-  my ($msg) = @_;
-  return () unless defined $msg;
-  my $body = eval { $msg->get_pristine_body() };
-  return () unless defined $body;
-  $body = join("\n", @$body) if ref $body eq 'ARRAY';
+  my ($pms) = @_;
+
+  return () unless defined $pms;
+
   my @uris;
-  while ($body =~ m{((?:https?|ftp)://[^\s<>"'()\[\]\\]+)}gi) {
-    my $u = $1;
-    $u =~ s/[\.,;:!?]+$//;
-    push @uris, $u if length $u;
+  my $uris = $pms->get_uri_detail_list();
+  my %huris = %{$uris};
+  foreach my $uri (keys %huris) {
+    push(@uris, $uri);
   }
   return @uris;
 }
@@ -1819,7 +1818,7 @@ sub _extract_uris_from_msg {
 # invisible (HTML-hidden) body, a small whitelist of headers, the URIs in
 # the message, and the MIME-part digests.
 sub _extract_features_from_message {
-  my ($self, $conf, $msg) = @_;
+  my ($self, $pms, $conf, $msg) = @_;
   my @tokens;
   return \@tokens unless defined $msg;
 
@@ -1846,7 +1845,7 @@ sub _extract_features_from_message {
     push @tokens, _tokenize_header_value('H*rcv:', $lines[-1]) if @lines;
   }
 
-  for my $u (_extract_uris_from_msg($msg)) {
+  for my $u (_extract_uris_from_msg($pms)) {
     push @tokens, _tokenize_uri($u);
   }
 
