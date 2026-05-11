@@ -519,6 +519,7 @@ sub _text_to_features {
 
     # When training, build per-document term sets to update doc counts
     my $local_doc_increment = 0;
+    my %term_deltas;
     if ($train == 1) {
       foreach my $tok_ref (@token_lists) {
         next unless ref($tok_ref) eq 'ARRAY' && @$tok_ref;
@@ -529,15 +530,19 @@ sub _text_to_features {
         my %seen;
         foreach my $t (@tokens) {
           $vocabulary{terms}{$t}{total} = ($vocabulary{terms}{$t}{total} || 0) + 1;
+          $term_deltas{$t}{total}      = ($term_deltas{$t}{total}      || 0) + 1;
           $seen{$t} = 1;
         }
         foreach my $t (keys %seen) {
           $vocabulary{terms}{$t}{docs} = ($vocabulary{terms}{$t}{docs} || 0) + 1;
+          $term_deltas{$t}{docs}       = ($term_deltas{$t}{docs}       || 0) + 1;
           # Track spam/ham sources
           if (defined $label && $label == 1) {
             $vocabulary{terms}{$t}{spam} = ($vocabulary{terms}{$t}{spam} || 0) + 1;
+            $term_deltas{$t}{spam}       = ($term_deltas{$t}{spam}       || 0) + 1;
           } elsif (defined $label && $label == 0) {
             $vocabulary{terms}{$t}{ham} = ($vocabulary{terms}{$t}{ham} || 0) + 1;
+            $term_deltas{$t}{ham}       = ($term_deltas{$t}{ham}       || 0) + 1;
           }
         }
       }
@@ -556,7 +561,7 @@ sub _text_to_features {
 
       my $vocab_path;
       if (defined $conf->{neuralnetwork_dsn} && $self && $self->{dbh}) {
-        $self->_save_vocabulary_to_sql(\%vocabulary, $self->{main}->{username});
+        $self->_save_vocabulary_to_sql(\%term_deltas, $self->{main}->{username});
       } else {
         $vocab_path = File::Spec->catfile($nn_data_dir, 'vocabulary-' . lc($self->{main}->{username}) . '.data');
         $vocab_path = Mail::SpamAssassin::Util::untaint_file_path($vocab_path);
@@ -690,7 +695,7 @@ sub learn_message {
   $dataset_path = Mail::SpamAssassin::Util::untaint_file_path($dataset_path);
 
   my $locker = $self->{main}->{locker};
-  unless ($locker->safe_lock($dataset_path, $conf->{neuralnetwork_lock_timeout})) {
+unless ($locker->safe_lock($dataset_path, $conf->{neuralnetwork_lock_timeout})) {
     dbg("Cannot acquire lock on '$dataset_path', skipping learning");
     return;
   }
@@ -725,14 +730,12 @@ sub learn_message {
   my ($feature_vectors, $vocab_size, $vocab_keys_ref) = _text_to_features($self, $self->{main}->{conf}, $nn_data_dir, $update_vocab, $isspam, undef, @email_token_lists);
 
   unless ($feature_vectors && @$feature_vectors) {
-    $locker->safe_unlock($dataset_path);
     return;
   }
 
   my $num_input = scalar(@{$feature_vectors->[0]{vec}});
   if ($num_input == 0) {
     dbg("No valid features found in message, skipping learning");
-    $locker->safe_unlock($dataset_path);
     return;
   }
   # Defer model creation until minimum training corpus is built
@@ -744,7 +747,6 @@ sub learn_message {
     my $hc = $vocab->{_ham_count}  || 0;
     if ($sc < $min_spam || $hc < $min_ham) {
       dbg("Deferring model creation: spam=$sc/$min_spam ham=$hc/$min_ham (vocabulary updated)");
-      $locker->safe_unlock($dataset_path);
       # Record message as learned to prevent re-learning.
       if (defined $msg && defined $msgid && length($msgid) > 0) {
         $self->_save_msgid_to_neural_seen($msgid, $isspam);
@@ -753,9 +755,9 @@ sub learn_message {
     }
   }
 
-  # Drop the lock and re-acquire it later
+  # Snapshot the on-disk model mtime so the save section can detect that
+  # another writer modified the model file while we were training.
   my $lock1_mtime = (stat($dataset_path))[9];
-  $locker->safe_unlock($dataset_path);
 
   # Two-layer hidden sizing: layer1 ~10% of inputs (clamped 32..512),
   # layer2 half of layer1 (min 16).
@@ -914,23 +916,10 @@ sub learn_message {
     dbg("Prediction after learning: " . (defined $pred_after ? $pred_after : 'undef'));
   }
 
-  # re-acquire the lock briefly to save the model
-  unless ($locker->safe_lock($dataset_path, $conf->{neuralnetwork_lock_timeout})) {
-    info("Cannot re-acquire lock on '$dataset_path' for model save; skipping persistence (vocabulary already updated)");
-    return 0;
-  }
-
-  # Log if we are going to overwrite the model
-  my $current_mtime = (stat($dataset_path))[9] // 0;
-  if (defined $lock1_mtime && $current_mtime > $lock1_mtime) {
-    info("on-disk model changed during training; overwriting");
-  }
-
-  # Save the model atomically
-  my $model_saved = 0;
+  # Pre-stage the FANN model to a temp file BEFORE acquiring the lock.
   my $tmp_path;
   my $file_mode = 0666 & ~umask();
-  eval {
+  my $prestage_ok = eval {
     my ($vol, $dir, undef) = File::Spec->splitpath($dataset_path);
     my $tmp_dir = File::Spec->catpath($vol, $dir, '');
     (undef, $tmp_path) = File::Temp::tempfile(
@@ -942,7 +931,33 @@ sub learn_message {
     $tmp_path = Mail::SpamAssassin::Util::untaint_file_path($tmp_path);
     chmod($file_mode, $tmp_path) or info("chmod $file_mode on '$tmp_path' failed: $!");
     $network->save($tmp_path) or die "model save to temp '$tmp_path' failed";
+    1;
+  };
+  if (!$prestage_ok) {
+    my $err = $@ || 'unknown';
+    info("Cannot pre-stage model save to '$dataset_path' ($err)");
+    if (defined $tmp_path && -f $tmp_path) {
+      unlink($tmp_path)
+        or info("Cannot remove temp model file '$tmp_path': $!");
+    }
+    return 0;
+  }
 
+  # Re-acquire the lock briefly to commit.
+  unless ($locker->safe_lock($dataset_path, $conf->{neuralnetwork_lock_timeout})) {
+    info("Cannot re-acquire lock on '$dataset_path' for model save; skipping persistence (vocabulary already updated)");
+    unlink($tmp_path)
+      or info("Cannot remove temp model file '$tmp_path': $!") if -f $tmp_path;
+    return 0;
+  }
+
+  my $current_mtime = (stat($dataset_path))[9] // 0;
+  if (defined $lock1_mtime && $current_mtime > $lock1_mtime) {
+    info("on-disk model changed during training; overwriting");
+  }
+
+  my $model_saved = 0;
+  eval {
     if (defined $self->{main}->{conf}->{neuralnetwork_dsn} && $self->{dbh}) {
       $self->_save_model_vocab_to_sql($locked_vocab_keys_ref)
         or info("WARNING: model saved but vocab SQL write failed; " .
@@ -950,8 +965,6 @@ sub learn_message {
                 "occur on the next learn call");
     } else {
       $self->_save_model_vocab($locked_vocab_keys_ref, $nn_data_dir);
-      # Verify the vocab file was actually written so we can detect the
-      # inconsistency now rather than silently at the next training run.
       my $vocab_path = $self->_model_vocab_path($nn_data_dir);
       unless (-f $vocab_path) {
         info("WARNING: model saved but vocab file '$vocab_path' is missing; " .
@@ -1099,41 +1112,50 @@ sub forget_message {
           if (!$rebuilt) {
             dbg("NeuralNetwork: Retrain after forget failed: " . ($@ || 'undef'));
           } else {
-            my $locker   = $self->{main}->{locker};
-            my $got_lock = 0;
-            eval { $got_lock = $locker->safe_lock($dataset_path, $conf->{neuralnetwork_lock_timeout}); 1 };
-            if (!$got_lock) {
-              info("NeuralNetwork: Cannot acquire lock for save after forget; in-memory model not persisted");
+            # Pre-stage the FANN model to a temp file BEFORE acquiring the lock.
+            my $tmp_path;
+            my $file_mode = 0666 & ~umask();
+            my $prestage_ok = eval {
+              my ($vol, $dir) = File::Spec->splitpath($dataset_path);
+              my $tmp_dir = File::Spec->catpath($vol, $dir, '');
+              (undef, $tmp_path) = File::Temp::tempfile(
+                'fann-XXXXXX', DIR => $tmp_dir, SUFFIX => '.tmp', UNLINK => 0);
+              $tmp_path = Mail::SpamAssassin::Util::untaint_file_path($tmp_path);
+              chmod($file_mode, $tmp_path) or info("chmod $file_mode on '$tmp_path' failed: $!");
+              $rebuilt->save($tmp_path) or die "save failed";
+              1;
+            };
+            if (!$prestage_ok) {
+              info("NeuralNetwork: Could not pre-stage retrained model after forget: " . ($@ || 'unknown'));
+              unlink($tmp_path) if defined $tmp_path && -f $tmp_path;
             } else {
-              my $file_mode = 0666 & ~umask();
-              eval {
-                my ($vol, $dir) = File::Spec->splitpath($dataset_path);
-                my $tmp_dir = File::Spec->catpath($vol, $dir, '');
-                my (undef, $tmp_path) = File::Temp::tempfile(
-                  'fann-XXXXXX', DIR => $tmp_dir, SUFFIX => '.tmp', UNLINK => 0);
-                $tmp_path = Mail::SpamAssassin::Util::untaint_file_path($tmp_path);
-                chmod($file_mode, $tmp_path) or info("chmod $file_mode on '$tmp_path' failed: $!");
-                if ($rebuilt->save($tmp_path)) {
-                  rename($tmp_path, $dataset_path) or die "rename failed: $!";
-                } else {
-                  unlink $tmp_path;
-                  die "save failed";
-                }
-                1;
-              } or do {
-                info("NeuralNetwork: Could not persist retrained model after forget: " . ($@ || 'unknown'));
-              };
-              my $new_vocab_keys = [ sort keys %$full_terms ];
-              if (defined $conf->{neuralnetwork_dsn} && $self->{dbh}) {
-                $self->_save_model_vocab_to_sql($new_vocab_keys);
+              my $locker   = $self->{main}->{locker};
+              my $got_lock = 0;
+              eval { $got_lock = $locker->safe_lock($dataset_path, $conf->{neuralnetwork_lock_timeout}); 1 };
+              if (!$got_lock) {
+                info("NeuralNetwork: Cannot acquire lock for save after forget; in-memory model not persisted");
+                unlink($tmp_path) if defined $tmp_path && -f $tmp_path;
               } else {
-                $self->_save_model_vocab($new_vocab_keys, $nn_data_dir);
+                eval {
+                  rename($tmp_path, $dataset_path) or die "rename failed: $!";
+                  $tmp_path = undef;
+                  1;
+                } or do {
+                  info("NeuralNetwork: Could not persist retrained model after forget: " . ($@ || 'unknown'));
+                  unlink($tmp_path) if defined $tmp_path && -f $tmp_path;
+                };
+                my $new_vocab_keys = [ sort keys %$full_terms ];
+                if (defined $conf->{neuralnetwork_dsn} && $self->{dbh}) {
+                  $self->_save_model_vocab_to_sql($new_vocab_keys);
+                } else {
+                  $self->_save_model_vocab($new_vocab_keys, $nn_data_dir);
+                }
+                $self->{neural_model}            = $rebuilt;
+                $self->{_neural_model_load_time} = time();
+                delete $self->{_model_vocab_cache};
+                info("NeuralNetwork: Retrained model with $full_vocab_size vocabulary terms after forget");
+                $locker->safe_unlock($dataset_path);
               }
-              $self->{neural_model}            = $rebuilt;
-              $self->{_neural_model_load_time} = time();
-              delete $self->{_model_vocab_cache};
-              info("NeuralNetwork: Retrained model with $full_vocab_size vocabulary terms after forget");
-              $locker->safe_unlock($dataset_path);
             }
           }
         }
@@ -1459,9 +1481,11 @@ sub _check_neuralnetwork {
         1;
       } or dbg("Vocabulary rebuild failed: " . ($@ || 'unknown'));
 
+      # Release the rebuild lock before the FANN save.
+      $locker->safe_unlock($dataset_path);
+
       if (!$rebuilt) {
         dbg("Vocabulary rebuild failed");
-        $locker->safe_unlock($dataset_path);
         return;
       }
 
@@ -1486,7 +1510,6 @@ sub _check_neuralnetwork {
         1;
       } or dbg("Could not persist rebuilt model: " . ($@ || 'unknown'));
 
-      $locker->safe_unlock($dataset_path);
       $network = $rebuilt;
     }
   } else {
@@ -1708,16 +1731,14 @@ sub _is_msgid_in_neural_seen {
 }
 
 sub _save_vocabulary_to_sql {
-  my ($self, $vocabulary, $username) = @_;
-  return unless $self->{dbh} && defined $vocabulary && ref($vocabulary) eq 'HASH';
+  my ($self, $term_deltas, $username) = @_;
+  return unless $self->{dbh} && defined $term_deltas && ref($term_deltas) eq 'HASH';
 
   $username //= $self->{main}->{username};
 
   eval {
-    my $terms = $vocabulary->{terms} || {};
-    return unless scalar keys %{$terms};
+    return unless scalar keys %{$term_deltas};
 
-    # Use ON DUPLICATE KEY UPDATE for MySQL or ON CONFLICT for other databases
     my $upsert_sql;
 
     if ($self->{main}->{conf}->{neuralnetwork_dsn} =~ /^dbi:(?:mysql|MariaDB)/i) {
@@ -1725,20 +1746,20 @@ sub _save_vocabulary_to_sql {
         INSERT INTO neural_vocabulary (username, keyword, total_count, docs_count, spam_count, ham_count)
         VALUES (?, ?, ?, ?, ?, ?)
         ON DUPLICATE KEY UPDATE
-          total_count = VALUES(total_count),
-          docs_count = VALUES(docs_count),
-          spam_count = VALUES(spam_count),
-          ham_count = VALUES(ham_count)
+          total_count = total_count + VALUES(total_count),
+          docs_count  = docs_count  + VALUES(docs_count),
+          spam_count  = spam_count  + VALUES(spam_count),
+          ham_count   = ham_count   + VALUES(ham_count)
       ";
     } else {
       $upsert_sql = "
         INSERT INTO neural_vocabulary (username, keyword, total_count, docs_count, spam_count, ham_count)
         VALUES (?, ?, ?, ?, ?, ?)
         ON CONFLICT (username, keyword) DO UPDATE SET
-          total_count = excluded.total_count,
-          docs_count = excluded.docs_count,
-          spam_count = excluded.spam_count,
-          ham_count = excluded.ham_count
+          total_count = neural_vocabulary.total_count + excluded.total_count,
+          docs_count  = neural_vocabulary.docs_count  + excluded.docs_count,
+          spam_count  = neural_vocabulary.spam_count  + excluded.spam_count,
+          ham_count   = neural_vocabulary.ham_count   + excluded.ham_count
       ";
     }
 
@@ -1746,21 +1767,21 @@ sub _save_vocabulary_to_sql {
     my $count = 0;
 
     $self->{dbh}->begin_work();
-    foreach my $keyword (sort keys %{$terms}) {
-      my $term_data = $terms->{$keyword};
+    foreach my $keyword (sort keys %{$term_deltas}) {
+      my $delta = $term_deltas->{$keyword};
       $sth_upsert->execute(
         lc($username),
         $keyword,
-        $term_data->{total} || 0,
-        $term_data->{docs}  || 0,
-        $term_data->{spam}  || 0,
-        $term_data->{ham}   || 0
+        $delta->{total} || 0,
+        $delta->{docs}  || 0,
+        $delta->{spam}  || 0,
+        $delta->{ham}   || 0
       );
       $count++;
     }
     $self->{dbh}->commit();
 
-    dbg("Saved $count vocabulary terms to SQL for user: $username");
+    dbg("Applied $count vocabulary term deltas to SQL for user: $username");
 
     # Invalidate cache for this user
     if (defined $self->{_vocab_cache}) {
