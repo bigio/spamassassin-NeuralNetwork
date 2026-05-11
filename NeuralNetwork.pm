@@ -44,7 +44,7 @@ use strict;
 use warnings;
 use re 'taint';
 
-my $VERSION = 0.8.4;
+my $VERSION = 0.9.0;
 
 use AI::FANN qw(:all);
 use Storable qw(store retrieve);
