@@ -792,14 +792,30 @@ sub learn_message {
         $num_input = $model_size;
         $network = $existing_network;
       } else {
-        dbg("Model vocabulary mismatch, rebuilding model with current vocabulary ($num_input terms)");
+        # Model and vocab files are inconsistent, discard the stale network and fall through to
+        # a fresh one.
+        my $stored_size = defined $stored_vocab_ref ? scalar(@$stored_vocab_ref) : 0;
+        info("Model/vocab mismatch (stored=$stored_size vs model=$model_size inputs); " .
+             "discarding stale model, starting fresh network");
+        undef $existing_network;
       }
     }
     unless (defined $network) {
-      # No existing model or inconsistent model, create a baseline from vocabulary
-      $network = $self->_retrain_from_vocabulary($self->{main}->{conf}, $nn_data_dir, $num_input);
+      # No existing model, or a consistency error cleared it above.
+      # If the vocabulary already has enough balanced data, build a baseline
+      # from it; otherwise start with a randomly-initialised network that will
+      # be shaped by subsequent incremental training.
+      my $vocab = $self->{_last_train_vocab} // {};
+      my $sc = $vocab->{_spam_count} || 0;
+      my $hc = $vocab->{_ham_count}  || 0;
+      my $min_spam = $self->{main}->{conf}->{neuralnetwork_min_spam_count};
+      my $min_ham  = $self->{main}->{conf}->{neuralnetwork_min_ham_count};
+      if ($sc >= $min_spam && $hc >= $min_ham) {
+        $network = $self->_retrain_from_vocabulary($self->{main}->{conf}, $nn_data_dir, $num_input);
+      }
       if (!defined $network) {
-        # No vocabulary stats available yet, create a fresh network
+        # Vocabulary not yet balanced enough, or retrain returned undef.
+        # Create a blank network; it will learn through incremental training.
         $network = AI::FANN->new_standard($num_input, $num_hidden1, $num_hidden2, $num_output_neurons);
         my $act_fn = ($train_algorithm == FANN_TRAIN_RPROP) ? FANN_SIGMOID_STEPWISE : FANN_SIGMOID;
         $network->hidden_activation_function($act_fn);
@@ -816,8 +832,10 @@ sub learn_message {
 
   # reuse the cached vocabulary for class-balance accounting
   my %vocab_for_balance = %{ delete $self->{_last_train_vocab} || {} };
-  my $spam_docs = $vocab_for_balance{_spam_count} || 1;
-  my $ham_docs  = $vocab_for_balance{_ham_count}  || 1;
+  my $raw_spam  = $vocab_for_balance{_spam_count} || 0;
+  my $raw_ham   = $vocab_for_balance{_ham_count}  || 0;
+  my $spam_docs = $raw_spam || 1;
+  my $ham_docs  = $raw_ham  || 1;
 
   # class_weight > 1 means this message belongs to the minority class and
   # should be trained harder; < 1 means it belongs to the majority class.
@@ -845,7 +863,7 @@ sub learn_message {
        ($train_algorithm == FANN_TRAIN_RPROP)
     && defined $vocab_keys_ref
     && scalar(@$vocab_keys_ref) == $num_input
-    && $spam_docs > 1 && $ham_docs > 1;
+    && $raw_spam >= 1 && $raw_ham >= 1;
   if ($replay_eligible) {
     ($svec, $hvec) = _build_class_tfidf_vectors(\%vocab_for_balance, $vocab_keys_ref);
   } elsif ($train_algorithm == FANN_TRAIN_RPROP && !defined $vocab_keys_ref) {
@@ -926,9 +944,20 @@ sub learn_message {
     $network->save($tmp_path) or die "model save to temp '$tmp_path' failed";
 
     if (defined $self->{main}->{conf}->{neuralnetwork_dsn} && $self->{dbh}) {
-      $self->_save_model_vocab_to_sql($locked_vocab_keys_ref);
+      $self->_save_model_vocab_to_sql($locked_vocab_keys_ref)
+        or info("WARNING: model saved but vocab SQL write failed; " .
+                "model/vocab are now inconsistent and a full rebuild will " .
+                "occur on the next learn call");
     } else {
       $self->_save_model_vocab($locked_vocab_keys_ref, $nn_data_dir);
+      # Verify the vocab file was actually written so we can detect the
+      # inconsistency now rather than silently at the next training run.
+      my $vocab_path = $self->_model_vocab_path($nn_data_dir);
+      unless (-f $vocab_path) {
+        info("WARNING: model saved but vocab file '$vocab_path' is missing; " .
+             "model/vocab are now inconsistent and a full rebuild will " .
+             "occur on the next learn call");
+      }
     }
     delete $self->{_model_vocab_cache};
     delete $self->{_model_vocab_cache_t};
@@ -1239,8 +1268,8 @@ sub _build_class_tfidf_vectors {
     my $idf       = log(($N + 1) / (($td->{docs} || 0) + 1)) + 1;
     my $spam_rate = ($td->{spam} || 0) / $spam_docs;
     my $ham_rate  = ($td->{ham}  || 0) / $ham_docs;
-    $spam_vec[$i] = ($spam_rate > $ham_rate) ? ($spam_rate - $ham_rate) * $idf : 0;
-    $ham_vec[$i]  = ($ham_rate > $spam_rate) ? ($ham_rate - $spam_rate) * $idf : 0;
+    $spam_vec[$i] = $spam_rate * $idf;
+    $ham_vec[$i]  = $ham_rate  * $idf;
   }
 
   for my $vec (\@spam_vec, \@ham_vec) {
