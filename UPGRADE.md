@@ -2,6 +2,11 @@
 - After each upgrade is better to remove the model files, they will be recreated
 on next `sa-learn(1)` run.
 
+# Note for users upgrading to version 0.10
+- if you are upgrading from version 0.9 to 0.10, `model_position` field
+must be reset using the following query:
+UPDATE `neural_vocabulary` SET `model_position` = NULL
+
 # Note for users upgrading to version 0.4
 - a new `model_position` column has been added, after updating the database you need
 to remove the model files `fann-user.model` in order to correctly retrain the model.

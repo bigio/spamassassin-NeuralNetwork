@@ -44,7 +44,7 @@ use strict;
 use warnings;
 use re 'taint';
 
-my $VERSION = 0.9.2;
+my $VERSION = 0.10.0;
 
 use AI::FANN qw(:all);
 use Storable qw(store retrieve);
@@ -798,8 +798,8 @@ unless ($locker->safe_lock($dataset_path, $conf->{neuralnetwork_lock_timeout})) 
         $network = $existing_network;
       } else {
         my $stored_size  = defined $stored_vocab_ref ? scalar(@$stored_vocab_ref) : 0;
-        my $growth_ratio = ($model_size > 0) ? abs($num_input - $model_size) / $model_size : 1;
-        if ($growth_ratio < 0.10) {
+        my $growth_ratio = ($model_size > 0) ? ($num_input - $model_size) / $model_size : 1;
+        if ($growth_ratio > 0 && $growth_ratio < 0.10) {
           # Vocab changed by less than 10%: preserve existing weights by adapting feature
           # vectors to the old model's input size rather than discarding a trained network.
           dbg("Vocab/model size mismatch (new=$num_input vs model=$model_size, " .
@@ -905,17 +905,18 @@ unless ($locker->safe_lock($dataset_path, $conf->{neuralnetwork_lock_timeout})) 
     my $hvec_ok = grep { $_ != 0 } @$hvec;
 
     if ($svec_ok && $hvec_ok) {
-      my $replay_cycles = int(sqrt($weighted_epochs / 5.0) + 0.5) || 1;
+      my $replay_cycles = int(sqrt($weighted_epochs / 5.0) + 0.5);
+      $replay_cycles = 3  if $replay_cycles < 3;
       $replay_cycles = 12 if $replay_cycles > 12;
-      # Alternate the order of (own, opposite) across cycles so the
-      # very last gradient step is not locked to the message's class.
+      # Each cycle: own class first, opposite class last, so the final
+      # RPROP gradient always pushes away from the just-trained class.
       for my $i (1 .. $replay_cycles) {
-        if ($i % 2 == ($isspam ? 1 : 0)) {
-          eval { $network->train($hvec, [0]); 1 } or dbg("Replay ham step failed: "  . ($@ || 'unknown'));
+        if ($isspam) {
           eval { $network->train($svec, [1]); 1 } or dbg("Replay spam step failed: " . ($@ || 'unknown'));
+          eval { $network->train($hvec, [0]); 1 } or dbg("Replay ham step failed: "  . ($@ || 'unknown'));
         } else {
-          eval { $network->train($svec, [1]); 1 } or dbg("Replay spam step failed: " . ($@ || 'unknown'));
           eval { $network->train($hvec, [0]); 1 } or dbg("Replay ham step failed: "  . ($@ || 'unknown'));
+          eval { $network->train($svec, [1]); 1 } or dbg("Replay spam step failed: " . ($@ || 'unknown'));
         }
       }
       dbg("RPROP replay: $replay_cycles cycle(s) after $weighted_epochs epoch(s) " .
@@ -966,7 +967,11 @@ unless ($locker->safe_lock($dataset_path, $conf->{neuralnetwork_lock_timeout})) 
 
   my $model_saved = 0;
   eval {
-    if (defined $self->{main}->{conf}->{neuralnetwork_dsn} && $self->{dbh}) {
+    if (!defined $locked_vocab_keys_ref || scalar(@$locked_vocab_keys_ref) != $locked_num_input) {
+      dbg("Skipping model vocab save: key count (" .
+          (defined $locked_vocab_keys_ref ? scalar(@$locked_vocab_keys_ref) : 'undef') .
+          ") != num_input ($locked_num_input)");
+    } elsif (defined $self->{main}->{conf}->{neuralnetwork_dsn} && $self->{dbh}) {
       $self->_save_model_vocab_to_sql($locked_vocab_keys_ref)
         or info("WARNING: model saved but vocab SQL write failed; " .
                 "model/vocab are now inconsistent and a full rebuild will " .
