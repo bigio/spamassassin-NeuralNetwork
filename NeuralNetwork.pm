@@ -94,6 +94,10 @@ sub set_config {
 
 =over 4
 
+=item use_neuralnetwork (0|1)          (default: 1)
+
+Whether to use Neural Network, if it is available.
+
 =item neuralnetwork_data_dir dirname (default: undef)
 
 Where NeuralNetwork plugin will store its data.
@@ -248,6 +252,11 @@ Use this rule to define finer-grained confidence tiers.
 
 =cut
 
+  push(@cmds, {
+    setting => 'use_neuralnetwork',
+    default => 1,
+    type => $Mail::SpamAssassin::Conf::CONF_TYPE_BOOL,
+  });
   push(@cmds, {
     setting => 'neuralnetwork_data_dir',
     is_admin => 1,
@@ -407,6 +416,8 @@ sub finish_parsing_end {
   my ($self, $opts) = @_;
 
   my $conf = $self->{main}->{conf};
+  return unless $conf->{use_neuralnetwork};
+
   my $nn_data_dir = $conf->{neuralnetwork_data_dir};
 
   # Initialize SQL connection if configured
@@ -633,6 +644,9 @@ sub learn_message {
   my $isspam = $params->{isspam};
   my $msg = $params->{msg};
   my $conf = $self->{main}->{conf};
+
+  return unless $conf->{use_neuralnetwork};
+
   $self->_init_sql_connection($conf) if defined $conf->{neuralnetwork_dsn};
   my $min_text_len = $conf->{neuralnetwork_min_text_len};
   my $learning_rate = $conf->{neuralnetwork_learning_rate};
@@ -1038,6 +1052,9 @@ unless ($locker->safe_lock($dataset_path, $conf->{neuralnetwork_lock_timeout})) 
 sub forget_message {
   my ($self, $params) = @_;
   my $conf = $self->{main}->{conf};
+
+  return unless $conf->{use_neuralnetwork};
+
   $self->_init_sql_connection($conf) if defined $conf->{neuralnetwork_dsn};
 
   my $username = $self->{main}->{username};
@@ -1427,14 +1444,16 @@ sub _retrain_from_vocabulary {
 sub _check_neuralnetwork {
   my ($self, $pms) = @_;
 
+  my $conf = $self->{main}->{conf};
+  return unless $conf->{use_neuralnetwork};
   return 0 if (!$self->{main}->{conf}->{use_learner});
+  
   my $msg = $pms->{msg};
 
   if(exists $pms->{neuralnetwork_prediction}) {
     return;
   }
 
-  my $conf = $self->{main}->{conf};
   $self->_init_sql_connection($conf) if defined $conf->{neuralnetwork_dsn};
   my $min_text_len = $conf->{neuralnetwork_min_text_len};
   my $spam_threshold = $conf->{neuralnetwork_spam_threshold};
