@@ -1,0 +1,43 @@
+From mark.chen@startup.example.com  Mon Apr 04 16:45:00 2005
+Return-Path: <mark.chen@startup.example.com>
+Delivered-To: team@startup.example.com
+Received: from mail.startup.example.com ([192.0.2.80]) by mail.example.com
+    (Postfix) with ESMTP id JJ7890 for <team@startup.example.com>;
+    Mon, 04 Apr 2005 16:45:00 +0000 (UTC)
+From: Mark Chen <mark.chen@startup.example.com>
+To: engineering@startup.example.com
+Subject: Sprint planning notes - April 5-18
+Date: Mon, 04 Apr 2005 16:45:00 +0000
+Message-Id: <nice010.test@startup.example.com>
+MIME-Version: 1.0
+Content-Type: text/plain
+
+Hi team,
+
+Here are the notes from today's sprint planning session.
+
+SPRINT GOALS (April 5-18):
+
+Backend:
+- Complete database migration to PostgreSQL (assigned: David)
+- Implement caching layer with Redis for search results (assigned: Priya)
+- Fix the authentication timeout bug reported in issue #342 (assigned: Tom)
+
+Frontend:
+- Redesign the user dashboard based on the UX team's mockups (assigned: Lisa)
+- Add pagination to the search results page (assigned: Amir)
+- Fix mobile layout issues on iOS Safari (assigned: Lisa)
+
+Infrastructure:
+- Set up staging environment on AWS (assigned: Mark)
+- Configure automated backups for production database (assigned: David)
+
+Definition of done: code reviewed, tests passing, deployed to staging.
+
+Velocity from last sprint: 34 story points
+Committed for this sprint: 31 story points
+
+Daily standup is at 9:30 AM. Please update your tickets in the tracker
+before the standup.
+
+Mark

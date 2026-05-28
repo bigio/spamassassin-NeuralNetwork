@@ -1,0 +1,46 @@
+From sarah.johnson@university.example.edu  Wed Feb 09 14:30:00 2005
+Return-Path: <sarah.johnson@university.example.edu>
+Delivered-To: colleagues@university.example.edu
+Received: from mail.university.example.edu ([192.0.2.60]) by mail.example.com
+    (Postfix) with ESMTP id HH9012 for <colleagues@university.example.edu>;
+    Wed, 09 Feb 2005 14:30:00 +0000 (UTC)
+From: Sarah Johnson <sarah.johnson@university.example.edu>
+To: cs-faculty@university.example.edu
+Subject: Faculty meeting minutes - February 8th
+Date: Wed, 09 Feb 2005 14:30:00 +0000
+Message-Id: <nice008.test@university.example.edu>
+MIME-Version: 1.0
+Content-Type: text/plain
+
+Dear colleagues,
+
+Please find below the minutes from yesterday's faculty meeting.
+
+Attendees: Prof. Johnson, Prof. Williams, Prof. Chen, Prof. Martinez,
+Dr. Thompson, Dr. Patel (7 total present, quorum achieved)
+
+AGENDA ITEMS DISCUSSED:
+
+1. Curriculum review for the 2005-2006 academic year
+   - CS 301 (Algorithms) will add a new module on randomized algorithms
+   - CS 450 (Machine Learning) approved as new elective starting Fall 2005
+   - Prerequisites for CS 401 updated to require CS 301
+
+2. Research funding update
+   - Two NSF proposals submitted last month are under review
+   - Prof. Chen received approval for equipment grant ($45,000)
+   - Deadline for next round of internal grants: March 15th
+
+3. Graduate admissions
+   - 847 applications received for Fall 2005 (up 12% from last year)
+   - Admissions committee will meet weekly starting Feb 14th
+
+4. Lab infrastructure
+   - Server room upgrade scheduled for spring break
+   - New 64-bit workstations ordered for the systems lab
+
+Next meeting: March 8th, 2:00 PM, Room 412.
+
+Best,
+Sarah Johnson
+Department Administrator
