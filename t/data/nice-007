@@ -1,0 +1,41 @@
+From dev@linux-kernel.example.org  Tue Jan 18 09:15:00 2005
+Return-Path: <dev@linux-kernel.example.org>
+Delivered-To: subscriber@example.com
+Received: from lists.linux-kernel.example.org ([192.0.2.50]) by mail.example.com
+    (Postfix) with ESMTP id GG5678 for <subscriber@example.com>;
+    Tue, 18 Jan 2005 09:15:00 +0000 (UTC)
+From: Linus Developer <dev@linux-kernel.example.org>
+To: kernel-dev@lists.linux-kernel.example.org
+Subject: Re: [PATCH] Fix race condition in mm/page_alloc.c
+Date: Tue, 18 Jan 2005 09:15:00 +0000
+Message-Id: <nice007.test@linux-kernel.example.org>
+MIME-Version: 1.0
+Content-Type: text/plain
+In-Reply-To: <20050117.patch@linux-kernel.example.org>
+
+On Mon, Jan 17 2005, Kernel Hacker wrote:
+> This patch fixes a potential race condition in mm/page_alloc.c when
+> __alloc_pages is called concurrently from interrupt context.
+
+The fix looks correct. The spinlock acquisition before checking the zone
+watermarks prevents the race window where a concurrent allocation could
+deplete the reserves between the check and the actual allocation.
+
+However, I have a concern about the performance impact. The spinlock is
+now held for the entire duration of the zone watermark check, which
+could increase lock contention under high memory pressure workloads.
+
+Have you measured the impact with the mmtests benchmark suite? Specifically
+the will-it-scale/page_fault[1-4] tests would be informative here.
+
+Also, line 1847 still has the old comment referencing the removed
+per-cpu page set fast path -- that should be updated.
+
+Otherwise the change looks good to me. With the performance measurement
+and comment update:
+
+Reviewed-by: Linus Developer <dev@linux-kernel.example.org>
+
+--
+Linus Developer
+Kernel Maintainer

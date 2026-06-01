@@ -1,6 +1,10 @@
 # Note for users upgrading to every version
-- After each upgrade is better to remove the model files, they will be recreated
-on next `sa-learn(1)` run.
+- After each upgrade to any major or minor version, is better to remove the model files,
+they will be recreated on next `sa-learn(1)` run.
+
+# Note for users upgrading to version 0.11
+- if you are upgrading to version 0.11, two new tables are needed, updated .sql files
+are in `sql` directory.
 
 # Note for users upgrading to version 0.10
 - if you are upgrading from version 0.9 to 0.10, `model_position` field

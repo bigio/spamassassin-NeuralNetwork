@@ -1,0 +1,49 @@
+From dev@kernel.example.org  Thu Apr 07 12:00:00 2005
+Return-Path: <dev@kernel.example.org>
+Delivered-To: subscriber@example.org
+Received: from lists.kernel.example.org ([192.0.2.40]) by mx.example.org
+    (Postfix) with ESMTP id J1K2L3 for <subscriber@example.org>;
+    Thu, 07 Apr 2005 12:00:00 +0000 (UTC)
+From: Linux Kernel Mailing List <dev@kernel.example.org>
+To: subscriber@example.org
+Subject: [PATCH v2] Fix memory corruption in file system driver
+Date: Thu, 07 Apr 2005 12:00:00 +0000
+Message-Id: <nice005.test@kernel.example.org>
+MIME-Version: 1.0
+Content-Type: text/plain
+
+From: Jane Developer <jane@example.org>
+
+This patch fixes a memory corruption bug in the file system driver that
+was introduced in commit 7e8f9a0b. The issue occurs when the driver
+attempts to read beyond the allocated buffer during directory traversal.
+
+The fix ensures that all buffer boundary checks are performed before any
+data is accessed. This was found during a routine code review and
+confirmed by stress testing the driver under concurrent workloads.
+
+Additionally, this patch cleans up several related error paths that
+failed to properly release allocated memory on failure, which could
+lead to memory leaks under certain conditions.
+
+Changes since v1:
+ - Addressed review comments from the maintainer
+ - Added boundary check for the edge case reported by the test team
+ - Improved error handling in the cleanup path
+
+Signed-off-by: Jane Developer <jane@example.org>
+Reviewed-by: Senior Engineer <senior@example.org>
+
+---
+ drivers/fs/example/driver.c | 24 ++++++++++++++++--------
+ 1 file changed, 16 insertions(+), 8 deletions(-)
+
+diff --git a/drivers/fs/example/driver.c b/drivers/fs/example/driver.c
+index abc1234..def5678 100644
+--- a/drivers/fs/example/driver.c
++++ b/drivers/fs/example/driver.c
+@@ -142,6 +142,7 @@ static int driver_read(struct inode *inode, struct file *file)
+ err_alloc:
++       kfree(buffer);
+        release_lock(inode);
+        return -ENOMEM;

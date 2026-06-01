@@ -1,0 +1,39 @@
+From hr@company.example.com  Wed Mar 22 08:00:00 2005
+Return-Path: <hr@company.example.com>
+Delivered-To: staff@company.example.com
+Received: from mail.company.example.com ([192.0.2.30]) by mx.company.example.com
+    (Postfix) with ESMTP id G7H8I9 for <staff@company.example.com>;
+    Wed, 22 Mar 2005 08:00:00 +0000 (UTC)
+From: Human Resources <hr@company.example.com>
+To: staff@company.example.com
+Subject: Updated vacation policy and holiday schedule for 2005
+Date: Wed, 22 Mar 2005 08:00:00 +0000
+Message-Id: <nice004.test@company.example.com>
+MIME-Version: 1.0
+Content-Type: text/plain
+
+Dear Team,
+
+We are writing to inform you of updates to the company vacation policy
+effective April 1, 2005.
+
+Key changes:
+- All employees now receive 15 days of paid vacation per year (up from 12).
+- Vacation days can be carried over to the next year (up to 5 days maximum).
+- Vacation requests should be submitted at least two weeks in advance.
+- Emergency time off requests will be handled on a case-by-case basis.
+
+Public holidays for 2005 are as follows:
+- January 1 (New Year's Day)
+- May 30 (Memorial Day)
+- July 4 (Independence Day)
+- September 5 (Labor Day)
+- November 24 (Thanksgiving)
+- December 25 (Christmas Day)
+
+Please review the full updated policy document on the company intranet.
+Contact HR if you have any questions or concerns.
+
+Best regards,
+Human Resources Department
+Company Inc.

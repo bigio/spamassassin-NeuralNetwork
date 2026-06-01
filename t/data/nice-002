@@ -1,0 +1,35 @@
+From alice@company.example.com  Mon Jan 10 10:00:00 2005
+Return-Path: <alice@company.example.com>
+Delivered-To: bob@company.example.com
+Received: from mail.company.example.com ([192.0.2.10]) by mx.company.example.com
+    (Postfix) with ESMTP id A1B2C3 for <bob@company.example.com>;
+    Mon, 10 Jan 2005 10:00:00 +0000 (UTC)
+From: Alice Smith <alice@company.example.com>
+To: bob@company.example.com
+Subject: Team meeting agenda for Thursday
+Date: Mon, 10 Jan 2005 10:00:00 +0000
+Message-Id: <nice002.test@company.example.com>
+MIME-Version: 1.0
+Content-Type: text/plain
+
+Hi Bob,
+
+I wanted to send over the agenda for our Thursday team meeting. We have a
+lot to cover this week, so please come prepared.
+
+Agenda:
+1. Q4 project status update (30 min)
+2. Budget planning for Q1 2005 (20 min)
+3. New hire onboarding schedule (15 min)
+4. Open discussion / Q&A (15 min)
+
+The meeting will be held in Conference Room B at 2:00 PM. Please let me
+know if you have any items you would like to add to the agenda.
+
+I have attached the Q4 report for your review before the meeting. Feel
+free to reach out if you have any questions.
+
+Best regards,
+Alice Smith
+Project Manager
+Company Inc.

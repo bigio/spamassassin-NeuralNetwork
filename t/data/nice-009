@@ -1,0 +1,39 @@
+From announce@apache.example.org  Thu Mar 17 11:00:00 2005
+Return-Path: <announce@apache.example.org>
+Delivered-To: users@apache.example.org
+Received: from lists.apache.example.org ([192.0.2.70]) by mail.example.com
+    (Postfix) with ESMTP id II3456 for <users@apache.example.org>;
+    Thu, 17 Mar 2005 11:00:00 +0000 (UTC)
+From: Apache Release Manager <announce@apache.example.org>
+To: users@apache.example.org
+Subject: [ANNOUNCE] Apache HTTP Server 2.0.54 Released
+Date: Thu, 17 Mar 2005 11:00:00 +0000
+Message-Id: <nice009.test@apache.example.org>
+MIME-Version: 1.0
+Content-Type: text/plain
+List-Id: Apache Users <users.apache.example.org>
+Precedence: bulk
+
+The Apache Software Foundation and the Apache HTTP Server Project are
+pleased to announce the release of version 2.0.54 of the Apache HTTP
+Server ("Apache").
+
+This version of Apache is principally a bug and security fix release.
+The following security vulnerabilities are addressed in this release:
+
+CAN-2005-0490: mod_auth_digest: Fixed a potential buffer overflow when
+               parsing Authorization headers.
+
+CAN-2005-0989: mod_ssl: Fixed a potential memory disclosure if a request
+               uses the SSL hostname extension.
+
+We consider this release to be the best version of Apache 2.0 available
+and encourage users of all prior versions to upgrade.
+
+Apache 2.0.54 is available for download from:
+  http://httpd.apache.org/download.cgi
+
+Please see the CHANGES_2.0 file, included in the distribution, for a
+full list of changes.
+
+The Apache HTTP Server Project

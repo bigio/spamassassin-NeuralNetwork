@@ -1,0 +1,39 @@
+From phish@secure-update.example.biz  Thu Apr 14 16:00:00 2005
+Return-Path: <phish@secure-update.example.biz>
+Delivered-To: customer@example.com
+Received: from secure-update.example.biz ([203.0.113.44]) by mail.example.com
+    (Postfix) with ESMTP id DD3456 for <customer@example.com>;
+    Thu, 14 Apr 2005 16:00:00 +0000 (UTC)
+From: "Security Team" <security@paypa1-secure.example.biz>
+To: customer@example.com
+Subject: URGENT: Your account has been suspended - Verify immediately
+Date: Thu, 14 Apr 2005 16:00:00 +0000
+Message-Id: <spam008.test@secure-update.example.biz>
+MIME-Version: 1.0
+Content-Type: text/plain
+
+Dear Valued Customer,
+
+We have detected UNAUTHORIZED ACCESS to your online banking account.
+Your account has been TEMPORARILY SUSPENDED for your protection.
+
+You must verify your account within 24 HOURS or it will be permanently
+closed and all funds frozen.
+
+To restore your account access click here immediately:
+http://203.0.113.44/verify-account-now
+
+You will need to provide:
+- Full name and date of birth
+- Social Security Number
+- Credit card number, expiry date and CVV2
+- Online banking username and password
+- Mother's maiden name (security verification)
+
+FAILURE TO VERIFY within 24 hours will result in permanent account
+suspension and possible legal action.
+
+This is an automated security notification. Do not reply to this email.
+
+Security Department
+Online Banking Division
