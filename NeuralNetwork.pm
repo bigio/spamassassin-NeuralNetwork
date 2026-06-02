@@ -1728,7 +1728,7 @@ sub _init_sql_connection {
     }
     $self->{dbh} = DBI->connect($dsn, $username, $password, \%attrs);
     # use SET NAMES in case the DSN or server default differs.
-    if ($dsn =~ /^dbi:(?:mysql|MariaDB)/i) {
+    if ($dsn =~ /^dbi:(?:mysql)/i) {
       eval { $self->{dbh}->do("SET NAMES 'utf8mb4'") };
     }
     $self->{_dbh_pid} = $$;
