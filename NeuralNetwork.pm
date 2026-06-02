@@ -1723,8 +1723,6 @@ sub _init_sql_connection {
     # multi-byte codepoints insert cleanly into the utf8mb4 schema columns.
     if ($dsn =~ /^dbi:mysql/i) {
       $attrs{mysql_enable_utf8mb4} = 1;
-    } elsif ($dsn =~ /^dbi:MariaDB/i) {
-      $attrs{mariadb_enable_utf8mb4} = 1;
     }
     $self->{dbh} = DBI->connect($dsn, $username, $password, \%attrs);
     # use SET NAMES in case the DSN or server default differs.
