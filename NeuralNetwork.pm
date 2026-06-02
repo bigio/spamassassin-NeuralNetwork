@@ -498,9 +498,10 @@ sub _text_to_features {
     # Ensure we have enough spam and ham examples in the vocabulary
     my $min_spam = $conf->{neuralnetwork_min_spam_count};
     my $min_ham  = $conf->{neuralnetwork_min_ham_count};
+    my $username = lc($self->{main}->{username});
     if ($train == 0) {
       if ( ($vocabulary{_spam_count} < $min_spam) || ($vocabulary{_ham_count} < $min_ham) ) {
-        dbg("Insufficient spam/ham data for prediction: spam=".$vocabulary{_spam_count}.", ham=".$vocabulary{_ham_count});
+        dbg("Insufficient spam/ham data for prediction for user $username: spam=".$vocabulary{_spam_count}.", ham=".$vocabulary{_ham_count});
         return ([], 0, []);
       }
     }
@@ -562,7 +563,6 @@ sub _text_to_features {
         # Keep file-based cache in sync with the freshly saved vocabulary
         my $ttl = $conf->{neuralnetwork_cache_ttl} || 0;
         if ($ttl > 0) {
-          my $username = lc($self->{main}->{username});
           $self->{_file_vocab_cache}{$username} = \%vocabulary;
           $self->{_file_vocab_cache_time}{$username} = time();
         }
@@ -705,7 +705,7 @@ sub learn_message {
   }
   # Invalidate vocabulary cache
   if (defined $self->{_vocab_cache}) {
-    my $username = $self->{main}->{username};
+    my $username = lc($self->{main}->{username});
     delete $self->{_vocab_cache}{$username};
     delete $self->{_vocab_cache_time}{$username};
   }
@@ -952,7 +952,7 @@ sub forget_message {
       WHERE username = ? AND msgid = ?
     ";
     my $sth = $self->{dbh}->prepare($del_sql);
-    if (not $sth->execute($username, $msgid)) {
+    if (not $sth->execute(lc($username), $msgid)) {
       info("Error forgetting message $msgid");
       return 0;
     }
@@ -1119,7 +1119,7 @@ sub _prune_vocabulary {
                        AND keyword IN ($placeholders)
                        AND model_position IS NULL";
       my $sth_del = $self->{dbh}->prepare($del_sql);
-      $sth_del->execute($user, @pruned);
+      $sth_del->execute(lc($user), @pruned);
       my $removed = $sth_del->rows();
       $removed = 0 if !defined $removed || $removed < 0;
       dbg("Deleted $removed terms for user: $user");
@@ -2179,6 +2179,8 @@ sub _load_vocabulary_from_sql {
   return {} unless $self->{dbh};
 
   $username //= $self->{main}->{username};
+  # normalize the username to lowercase
+  $username = lc($username) if defined $username;
 
   # Check cache first to avoid repeated database queries
   if (!defined $self->{_vocab_cache}) {
