@@ -2221,6 +2221,7 @@ sub _load_vocabulary_from_sql {
     1;
   } or do {
     dbg("Pre-check query failed: " . ($@ || 'unknown'));
+    undef $self->{dbh};
   };
 
   my $conf     = $self->{main}->{conf};
@@ -2264,6 +2265,7 @@ sub _load_vocabulary_from_sql {
   } or do {
     my $err = $@ || 'unknown';
     dbg("Failed to load vocabulary from SQL: $err");
+    undef $self->{dbh};
   };
 
   # Cache the vocabulary with timestamp
@@ -2347,6 +2349,7 @@ sub _load_model_vocab_from_sql {
     1;
   } or do {
     dbg("Failed to load model vocabulary from SQL: " . ($@ || 'unknown'));
+    undef $self->{dbh};
   };
   return $vocab_ref;
 }
