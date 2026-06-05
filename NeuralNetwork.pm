@@ -65,11 +65,10 @@ sub finish {
   my $self = shift;
 
   if ($self->{dbh}) {
-    if (($self->{_dbh_pid} || 0) == $$) {
+    eval {
+      local $SIG{PIPE} = 'IGNORE';
       $self->{dbh}->disconnect();
-    } else {
-      $self->{dbh}->{InactiveDestroy} = 1;
-    }
+    };
     undef $self->{dbh};
   }
 }
@@ -1704,7 +1703,10 @@ sub _init_sql_connection {
 
   # Reconnect in each child process to prevent SQL protocol state corruption
   if ($self->{dbh} && ($self->{_dbh_pid} || 0) != $$) {
-    $self->{dbh}->{InactiveDestroy} = 1;
+    eval {
+      local $SIG{PIPE} = 'IGNORE';
+      $self->{dbh}->disconnect();
+    };
     undef $self->{dbh};
   }
 
